@@ -1,0 +1,503 @@
+
+import React, { useState, useMemo, useRef } from 'react';
+import { supabase } from "../src/lib/supabaseClient";
+import { 
+  Plus, 
+  ChevronRight,
+  Filter,
+  School,
+  Cake,
+  BookOpen,
+  Church,
+  Save,
+  Trash2,
+  X,
+  UserPlus,
+  Edit3,
+  Camera,
+  Image as ImageIcon,
+  Clock,
+  Mail
+} from 'lucide-react';
+import { Student, AttendanceRecord, calculateAttendanceWeight, Group, calculateStudentRate, getTodayStr, getAcademicYearRange, AttendanceStatus } from '../types';
+
+interface StudentListProps {
+  students: Student[];
+  onUpdateStudent: (updatedStudent: Student) => void;
+  canEditCenso?: boolean;
+  onAddStudent?: (s: Student) => void;
+  onRemoveStudent?: (id: string) => Promise<void>;
+  groups?: Group[];
+  classDays: string[];
+  warningMessage?: string;
+  warningType?: "no-group" | "no-students";
+}
+
+const StudentList: React.FC<StudentListProps> = ({ 
+  students, 
+  onUpdateStudent, 
+  canEditCenso, 
+  onAddStudent, 
+  onRemoveStudent,
+  groups = [],
+  classDays,
+  warningMessage,
+  warningType,
+}) => {
+  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [tempName, setTempName] = useState('');
+  const [tempSchool, setTempSchool] = useState('');
+  const [tempEmail, setTempEmail] = useState('');
+  const [tempParentEmail, setTempParentEmail] = useState('');
+  const [tempBirthDate, setTempBirthDate] = useState('');
+  const [tempPhoto, setTempPhoto] = useState<string | undefined>(undefined);
+  const [tempHistory, setTempHistory] = useState<AttendanceRecord[]>([]);
+
+  const [isAddingNew, setIsAddingNew] = useState(false);
+  const [filterGroupId, setFilterGroupId] = useState<string>('all');
+
+  const [newName, setNewName] = useState('');
+  const [newSchool, setNewSchool] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newParentEmail, setNewParentEmail] = useState('');
+
+  const [newBirthDate, setNewBirthDate] = useState('2015-01-01');
+  const [newGroup, setNewGroup] = useState(groups[0]?.id || '');
+  const [confirmDeleteStudent, setConfirmDeleteStudent] = useState<Student | null>(null);
+
+
+  const filteredStudents = useMemo(() => {
+    if (filterGroupId === 'all') return students;
+    return students.filter(s => s.groupId === filterGroupId);
+  }, [students, filterGroupId]);
+
+  const getFullHistory = (student: Student) => {
+    const today = getTodayStr();
+    const range = getAcademicYearRange(today);
+    const relevantClassDays = classDays.filter(day => day >= range.start && day <= range.end && day <= today);
+
+    const fullHistory = relevantClassDays.map(day => {
+      const existing = student.attendanceHistory.find(h => h.date === day);
+      if (existing) return { ...existing };
+      return { date: day, catechism: 'absent' as AttendanceStatus, mass: 'absent' as AttendanceStatus };
+    });
+
+    return fullHistory.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  };
+
+  const handleOpenDetail = (student: Student) => {
+    setSelectedStudent(student);
+    setTempName(student.name);
+    setTempSchool(student.school);
+    setTempEmail(student.email ?? '');
+    setTempParentEmail(student.parentEmail ?? '');
+    setTempBirthDate(student.birthDate);
+    setTempPhoto(student.photo);
+    setTempHistory(getFullHistory(student));
+    setIsEditing(false);
+  };
+
+  const handleContact = (student: Student) => {
+    const subject = encodeURIComponent(`Parroquia San Pascual Baylón - Información sobre ${student.name}`);
+    const to = (isEditing ? tempParentEmail : student.parentEmail) || student.parentEmail;
+    if (!to) {
+      alert("No hay email de padres para este alumno.");
+      return;
+    }
+    window.location.href = `mailto:${to}?subject=${subject}`;
+  };
+
+  const signStudentPhoto = async (path: string) => {
+    const { data, error } = await supabase.storage
+      .from("media")
+      .createSignedUrl(path, 60 * 60);
+    if (error || !data?.signedUrl) return "";
+    return data.signedUrl;
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      if (!selectedStudent?.id) {
+        alert("Primero guarda/crea el alumno y después podrás subir la foto.");
+        return;
+      }
+
+      if (!file.type.startsWith("image/")) {
+        alert("El archivo debe ser una imagen.");
+        return;
+      }
+
+      if (file.size > 2 * 1024 * 1024) {
+        alert("La imagen no puede superar 2MB.");
+        return;
+      }
+
+      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+      const path = `students/${selectedStudent.id}/photo.${ext}`;
+
+      // 1) subir a storage
+      const { error: upErr } = await supabase.storage
+        .from("media")
+        .upload(path, file, { upsert: true, contentType: file.type });
+
+      if (upErr) {
+        alert("Error subiendo imagen: " + upErr.message);
+        return;
+      }
+
+      // 2) guardar ruta en BD
+      const { error: dbErr } = await supabase
+        .from("students")
+        .update({ photo_path: path })
+        .eq("id", selectedStudent.id);
+
+      if (dbErr) {
+        alert("Imagen subida, pero no se pudo guardar en alumno: " + dbErr.message);
+        return;
+      }
+
+      // 3) preview inmediata
+      const signedUrl = await signStudentPhoto(path);
+      setTempPhoto(signedUrl || URL.createObjectURL(file));
+
+      if (selectedStudent) {
+        const updated: Student = {
+          ...selectedStudent,
+          photo: signedUrl || selectedStudent.photo,
+        };
+        // esto actualiza la lista en App.tsx porque updateStudent ya hace setStudents
+        onUpdateStudent(updated);
+        setSelectedStudent(updated);
+      }
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+
+  const handleSave = () => {
+    if (!selectedStudent) return;
+
+    if (!tempEmail.trim()) {
+      alert("El email del niño es obligatorio.");
+      return;
+    }
+
+    const updated: Student = {
+      ...selectedStudent,
+      name: tempName,
+      school: tempSchool,
+      birthDate: tempBirthDate,
+      photo: tempPhoto,
+      email: tempEmail.trim(),
+      parentEmail: tempParentEmail.trim(),
+      attendanceHistory: tempHistory,
+    };
+
+    onUpdateStudent(updated);
+    setSelectedStudent(updated);
+    setIsEditing(false);
+  };
+
+
+  const cycleStatus = (current: AttendanceStatus): AttendanceStatus => {
+    if (current === 'absent') return 'present';
+    if (current === 'present') return 'late';
+    return 'absent';
+  };
+
+  const handleAddNew = () => {
+    if (!onAddStudent || !newName) return;
+
+    // Si son NOT NULL, no puedes permitir vacío
+    if (!newEmail.trim()) {
+      alert("Debes introducir el email del niño.");
+      return;
+    }
+    if (!newParentEmail.trim()) {
+      alert("Debes introducir el email de los padres.");
+      return;
+    }
+
+    const s: Student = {
+      id: "",
+      name: newName,
+      school: newSchool,
+      email: newEmail.trim(),
+      parentEmail: newParentEmail.trim(),
+      birthDate: newBirthDate,
+      groupId: newGroup,
+      attendanceHistory: []
+    };
+
+    onAddStudent(s);
+    setIsAddingNew(false);
+    setNewName('');
+    setNewSchool('');
+    setNewEmail('');
+    setNewParentEmail('');
+  };
+
+  return (
+    <div className="space-y-6">
+      {warningMessage && (
+        <div className="mb-4 p-4 rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 text-sm">
+          <span className="font-bold">Aviso:</span> {warningMessage}
+        </div>
+      )}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-3">
+          {canEditCenso && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-600 text-sm font-medium">
+              <Filter size={16} />
+              <select className="bg-transparent outline-none cursor-pointer" value={filterGroupId} onChange={(e) => setFilterGroupId(e.target.value)}>
+                <option value="all">Todos los grupos</option>
+                {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+        {canEditCenso && (
+          <button onClick={() => setIsAddingNew(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-semibold shadow-sm">
+            <UserPlus size={18} /> Nuevo Niño
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredStudents.map(student => {
+          const rate = calculateStudentRate(student, classDays);
+          const groupName = groups.find(g => g.id === student.groupId)?.name || 'SIN GRUPO';
+
+          return (
+            <div key={student.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow p-6 group cursor-pointer border-l-4 border-l-indigo-600 relative" onClick={() => handleOpenDetail(student)}>
+              <div className="flex items-start justify-between mb-4">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center font-bold text-indigo-700 overflow-hidden shrink-0">
+                  {student.photo ? <img src={student.photo} className="w-full h-full object-cover" /> : student.name[0]}
+                </div>
+                {canEditCenso && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmDeleteStudent(student);
+                    }}
+                    className="p-2 text-slate-200 hover:text-red-500 transition-colors"
+                    title="Eliminar alumno"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                )}
+
+              </div>
+              <h3 className="text-lg font-bold text-slate-900 mb-1 truncate">{student.name}</h3>
+              <p className="text-[10px] font-bold text-indigo-500 uppercase mb-2">{groupName}</p>
+              <div>
+                <div className="flex items-center justify-between text-xs font-bold text-slate-400 uppercase mb-1.5"><span>Asistencia Real</span><span>{rate}%</span></div>
+                <div className="h-2 bg-slate-100 rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all duration-1000 ${rate > 80 ? 'bg-green-500' : rate > 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${rate}%` }} /></div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {isAddingNew && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl p-8 space-y-6">
+            <h3 className="text-xl font-bold text-slate-900">Nuevo Catecúmeno</h3>
+            <div className="space-y-4">
+              <input type="text" placeholder="Nombre completo" className="w-full px-4 py-2 border rounded-xl" value={newName} onChange={e => setNewName(e.target.value)} />
+              <input type="text" placeholder="Colegio" className="w-full px-4 py-2 border rounded-xl" value={newSchool} onChange={e => setNewSchool(e.target.value)} />
+              <input type="date" className="w-full px-4 py-2 border rounded-xl" value={newBirthDate} onChange={e => setNewBirthDate(e.target.value)} />
+              <input
+                type="email"
+                placeholder="Email del niño (si tiene)"
+                className="w-full px-4 py-2 border rounded-xl"
+                value={newEmail}
+                onChange={e => setNewEmail(e.target.value)}
+              />
+
+              <input
+                type="email"
+                placeholder="Email de los padres"
+                className="w-full px-4 py-2 border rounded-xl"
+                value={newParentEmail}
+                onChange={e => setNewParentEmail(e.target.value)}
+              />
+
+              <select className="w-full px-4 py-2 border rounded-xl" value={newGroup} onChange={e => setNewGroup(e.target.value)}>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select>
+            </div>
+            <div className="flex gap-4"><button onClick={() => setIsAddingNew(false)} className="flex-1 py-2 text-slate-500 font-bold">Cancelar</button><button onClick={handleAddNew} className="flex-1 py-2 bg-indigo-600 text-white font-bold rounded-xl">Inscribir</button></div>
+          </div>
+        </div>
+      )}
+
+      {selectedStudent && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-end">
+          <div className="bg-white w-full max-w-xl h-full shadow-2xl overflow-y-auto flex flex-col">
+            <div className="p-8 border-b flex items-center justify-between bg-slate-50 sticky top-0 z-10">
+              <button onClick={() => setSelectedStudent(null)} className="p-2 hover:bg-slate-200 rounded-full"><ChevronRight className="rotate-180" size={24} /></button>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setIsEditing(!isEditing)} 
+                  className={`px-4 py-2 border rounded-lg text-sm font-medium transition-colors ${isEditing ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 hover:bg-slate-100'}`}
+                >
+                  {isEditing ? <X size={16} className="inline mr-1" /> : <Edit3 size={16} className="inline mr-1" />}
+                  {isEditing ? 'Cancelar' : 'Editar'}
+                </button>
+                {!isEditing && (
+                  <button 
+                    onClick={() => handleContact(selectedStudent)} 
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors flex items-center gap-2"
+                  >
+                    <Mail size={16} />
+                    Email Padres
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="p-8 space-y-8 flex-1">
+              <div className="flex items-center gap-6">
+                <div className="relative group/photo shrink-0 w-24 h-24">
+                  <div className="w-full h-full rounded-3xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-3xl shadow-inner overflow-hidden">
+                    {tempPhoto ? <img src={tempPhoto} className="w-full h-full object-cover" /> : selectedStudent.name[0]}
+                  </div>
+                  {isEditing && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-3xl opacity-0 group-hover/photo:opacity-100 transition-opacity">
+                      <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-white text-indigo-600 rounded-full"><Camera size={20} /></button>
+                      <input type="file" ref={fileInputRef} onChange={handlePhotoUpload} accept="image/*" className="hidden" />
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1">
+                  {isEditing ? (
+                    <div className="space-y-2">
+                      <input type="text" className="w-full px-3 py-2 border rounded-xl text-lg font-bold" value={tempName} onChange={e => setTempName(e.target.value)} />
+                      <input type="text" className="w-full px-3 py-2 border rounded-xl" value={tempSchool} onChange={e => setTempSchool(e.target.value)} />
+                      <input
+                        type="email"
+                        className="w-full px-3 py-2 border rounded-xl"
+                        value={tempEmail}
+                        onChange={e => setTempEmail(e.target.value)}
+                        placeholder="Email del niño"
+                      />
+
+                      <input
+                        type="email"
+                        className="w-full px-3 py-2 border rounded-xl"
+                        value={tempParentEmail}
+                        onChange={e => setTempParentEmail(e.target.value)}
+                        placeholder="Email de padres"
+                      />
+
+                    </div>
+                  ) : (
+                    <>
+                      <h2 className="text-2xl font-bold text-slate-900">{selectedStudent.name}</h2>
+                      <p className="text-slate-500">{selectedStudent.school}</p>
+                      <p className="text-slate-500 text-sm">{selectedStudent.email}</p>
+                      {selectedStudent.parentEmail && (
+                        <p className="text-slate-500 text-sm">Padres: {selectedStudent.parentEmail}</p>
+                      )}
+
+                    </>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-lg font-bold">Asistencia Curso Actual</h4>
+                  {isEditing && <button onClick={handleSave} className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-full flex items-center gap-1"><Save size={14} />Guardar</button>}
+                </div>
+                <div className="space-y-3">
+                  {tempHistory.map((record, i) => (
+                    <div key={i} className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl">
+                      <span className="font-semibold text-slate-700 text-sm">{new Date(record.date).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                      <div className="flex items-center gap-3">
+                        <div className="flex flex-col items-center">
+                          <span className="text-[9px] font-bold text-slate-400 mb-1">CAT</span>
+                          <button 
+                            disabled={!isEditing} 
+                            onClick={() => { const h = [...tempHistory]; h[i].catechism = cycleStatus(h[i].catechism); setTempHistory(h); }} 
+                            className={`p-2 rounded-lg ${record.catechism === 'present' ? 'bg-indigo-600 text-white' : record.catechism === 'late' ? 'bg-amber-100 text-amber-700 border border-amber-400' : 'bg-slate-50 text-slate-300'}`}
+                          >
+                            {record.catechism === 'late' ? <Clock size={16} /> : <BookOpen size={16} />}
+                          </button>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <span className="text-[9px] font-bold text-slate-400 mb-1">MISA</span>
+                          <button 
+                            disabled={!isEditing} 
+                            onClick={() => { const h = [...tempHistory]; h[i].mass = cycleStatus(h[i].mass); setTempHistory(h); }} 
+                            className={`p-2 rounded-lg ${record.mass === 'present' ? 'bg-amber-500 text-white' : record.mass === 'late' ? 'bg-amber-100 text-amber-700 border border-amber-400' : 'bg-slate-50 text-slate-300'}`}
+                          >
+                            {record.mass === 'late' ? <Clock size={16} /> : <Church size={16} />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteStudent && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-slate-900/60"
+            onClick={() => setConfirmDeleteStudent(null)}
+          />
+
+          <div className="relative w-full max-w-xl mx-4 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="p-6 sm:p-8 border-b border-slate-100 bg-red-50">
+              <h3 className="text-lg sm:text-xl font-extrabold text-red-700">
+                Acción irreversible
+              </h3>
+              <p className="mt-2 text-sm sm:text-base text-red-900">
+                Vas a eliminar a{" "}
+                <span className="font-bold">{confirmDeleteStudent.name}</span>.
+                Esto borrará también{" "}
+                <span className="font-bold">todos sus registros de asistencia</span> y no se puede deshacer.
+              </p>
+            </div>
+
+            <div className="p-6 sm:p-8 flex flex-col sm:flex-row gap-3 sm:justify-end">
+              <button
+                onClick={() => setConfirmDeleteStudent(null)}
+                className="px-5 py-3 rounded-2xl border border-slate-200 bg-white text-slate-700 font-bold hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+
+              <button
+                onClick={async () => {
+                  const id = confirmDeleteStudent.id;
+                  setConfirmDeleteStudent(null);
+
+                  try {
+                    await onRemoveStudent?.(id);
+                  } catch (e: any) {
+                    alert(e?.message ?? "Error eliminando alumno.");
+                  }
+                }}
+                className="px-5 py-3 rounded-2xl bg-red-600 text-white font-extrabold hover:bg-red-700"
+              >
+                Eliminar definitivamente
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default StudentList;
