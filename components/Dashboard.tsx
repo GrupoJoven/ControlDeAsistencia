@@ -42,66 +42,72 @@ const Dashboard: React.FC<DashboardProps> = ({ students, events, onManageAgenda,
 
   // Monthly chart data based on current academic year class days
   const chartData = useMemo(() => {
-    const dailyStats: Record<string, { totalWeight: number, count: number }> = {};
-    
-    // Filter class days to current academic year that have passed
-    const pastClassDays = classDays.filter(d => d >= academicYear.start && d <= academicYear.end && d <= today);
-
+    const nStudents = students.length;
+  
+    // Si no hay alumnos, evita divisiones raras
+    if (nStudents === 0) {
+      const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+      const currentMonthIdx = new Date(today).getMonth();
+      return [
+        { name: 'Sep', participación: 0 },
+        { name: monthNames[currentMonthIdx], participación: 0 }
+      ];
+    }
+  
+    // 1) Días lectivos del curso ya pasados
+    const pastClassDays = classDays.filter(
+      d => d >= academicYear.start && d <= academicYear.end && d <= today
+    );
+  
+    const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  
+    // 2) Acumuladores mensuales
+    // monthTotals[month] = { totalWeight: suma pesos, nDays: nº días lectivos considerados }
+    const monthTotals: Record<string, { totalWeight: number; nDays: number }> = {};
+  
+    // 3) Recorremos días y sumamos peso de TODO el grupo (ausentes/no-registro = 0)
     pastClassDays.forEach(day => {
       let totalDayWeight = 0;
-      let dayParticipants = 0;
-
+  
       students.forEach(student => {
         const record = student.attendanceHistory.find(h => h.date === day);
         if (record) {
-          const weight = calculateAttendanceWeight(record);
-          // Only count if there was some participation (non-zero)
-          if (weight > 0) {
-            totalDayWeight += weight;
-            dayParticipants++;
-          }
+          totalDayWeight += calculateAttendanceWeight(record);
         }
+        // Si no hay record: suma 0 (implícito)
       });
-
-      if (dayParticipants > 0) {
-        dailyStats[day] = { totalWeight: totalDayWeight, count: dayParticipants };
-      }
-    });
-
-    const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-    
-    // Group daily stats by month
-    const monthlyParticipation: Record<string, number[]> = {};
-    Object.entries(dailyStats).forEach(([date, data]) => {
-      const d = new Date(date);
+  
+      const d = new Date(day);
       const monthKey = monthNames[d.getMonth()];
-      const dailyAvg = (data.totalWeight / data.count) * 100;
-      
-      if (!monthlyParticipation[monthKey]) monthlyParticipation[monthKey] = [];
-      monthlyParticipation[monthKey].push(dailyAvg);
+  
+      if (!monthTotals[monthKey]) monthTotals[monthKey] = { totalWeight: 0, nDays: 0 };
+      monthTotals[monthKey].totalWeight += totalDayWeight;
+      monthTotals[monthKey].nDays += 1; // contamos el día lectivo aunque haya sido 0
     });
-
-    // The academic year spans 12 months (Sept to Aug)
-    const yearSequence = [8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7]; // Sep, Oct, ... Aug
+  
+    // 4) Construimos secuencia académica Sep->Ago, pero cortamos en mes actual
+    const yearSequence = [8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7]; // Sep..Ago
     const currentMonthIdx = new Date(today).getMonth();
-    
-    // We only show months that have already occurred in the academic sequence
-    const dataForChart = [];
+  
+    const dataForChart: { name: string; participación: number }[] = [];
+  
     for (const mIdx of yearSequence) {
       const mName = monthNames[mIdx];
-      const avgs = monthlyParticipation[mName] || [];
-      
-      const finalAvg = avgs.length > 0 
-        ? Math.round(avgs.reduce((a, b) => a + b, 0) / avgs.length)
-        : null;
-
-      if (finalAvg !== null) {
-        dataForChart.push({ name: mName, participación: finalAvg });
+      const m = monthTotals[mName];
+  
+      if (m && m.nDays > 0) {
+        // Media mensual ponderada por alumnos y días:
+        const avg = (m.totalWeight / (nStudents * m.nDays)) * 100;
+        dataForChart.push({ name: mName, participación: Math.round(avg) });
+      } else {
+        // Si prefieres mostrar 0 en meses sin datos, descomenta:
+        // dataForChart.push({ name: mName, participación: 0 });
+        // Si prefieres ocultarlos (como ahora), no haces nada.
       }
-      
+  
       if (mIdx === currentMonthIdx) break;
     }
-
+  
     return dataForChart.length > 0 ? dataForChart : [
       { name: 'Sep', participación: 0 },
       { name: monthNames[currentMonthIdx], participación: 0 }
