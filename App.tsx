@@ -19,6 +19,7 @@ import {
   Briefcase,
   Key,
   Menu,
+  ClipboardList,
   X
 } from 'lucide-react';
 import { Student, AttendanceRecord, User, Group, ParishEvent, getTodayStr, AttendanceStatus, CatechistAttendanceRecord } from './types';
@@ -31,9 +32,10 @@ import GroupManager from './components/GroupManager';
 import ClassDayManager from './components/ClassDayManager';
 import CatechistManager from './components/CatechistManager';
 import CatechistAttendance from './components/CatechistAttendance';
+import ServicesManagement from './components/ServicesManagement';
 
 
-type View = 'dashboard' | 'attendance' | 'students' | 'coordinator-groups' | 'coordinator-edit-groups' | 'agenda' | 'reports' | 'class-days' | 'catechists' | 'catechist-attendance' | 'account' | 'my-account';
+type View = 'dashboard' | 'attendance' | 'students' | 'services' | 'coordinator-groups' | 'coordinator-edit-groups' | 'agenda' | 'reports' | 'class-days' | 'catechists' | 'catechist-attendance' | 'account' | 'my-account';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -967,6 +969,17 @@ const App: React.FC = () => {
           <div className="mt-4 px-4 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mi Grupo</div>
           <button onClick={() => navigateTo('attendance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'attendance' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}><CheckCircle2 size={20} /><span className="font-medium text-sm">Pasar Lista</span></button>
           <button onClick={() => navigateTo('students')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'students' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}><Users size={20} /><span className="font-medium text-sm">Mis Catecúmenos</span></button>
+          <button
+            onClick={() => navigateTo('services')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              currentView === 'services'
+                ? 'bg-indigo-50 text-indigo-700'
+                : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <ClipboardList size={20} />
+            <span className="font-medium text-sm">Servicios</span>
+          </button>
 
           {currentUser.role === 'coordinator' && (
             <>
@@ -1023,6 +1036,7 @@ const App: React.FC = () => {
               {currentView === 'dashboard' && 'Dashboard Parroquial'}
               {currentView === 'attendance' && 'Control de Asistencia'}
               {currentView === 'students' && (currentGroupName || 'Mis Catecúmenos')}
+              {currentView === 'services' && 'Servicios'}
               {currentView === 'reports' && 'Informes pastorales con IA'}
               {currentView === 'coordinator-groups' && 'Gestión Integral de Niños'}
               {currentView === 'catechists' && 'Registro de Catequistas'}
@@ -1088,6 +1102,14 @@ const App: React.FC = () => {
               warningType={showNoGroupWarning ? "no-group" : showNoStudentsWarning ? "no-students" : undefined}
             />
           )}
+          {currentView === 'services' && (
+            <ServicesManagement
+              currentUser={currentUser}
+              students={myCatecumenos}
+              warningMessage={warningMessage}
+              warningType={showNoGroupWarning ? "no-group" : showNoStudentsWarning ? "no-students" : undefined}
+            />
+          )}
 
           {currentView === 'coordinator-groups' && (
             <StudentList
@@ -1098,6 +1120,7 @@ const App: React.FC = () => {
               onRemoveStudent={(id) => void removeStudent(id)}
               groups={groups}
               classDays={classDays}
+              enableMassServices={true}
             />
           )}
 

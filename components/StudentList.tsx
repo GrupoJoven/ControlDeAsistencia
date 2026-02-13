@@ -31,6 +31,7 @@ interface StudentListProps {
   classDays: string[];
   warningMessage?: string;
   warningType?: "no-group" | "no-students";
+  enableMassServices?: boolean;
 }
 
 const StudentList: React.FC<StudentListProps> = ({ 
@@ -43,6 +44,7 @@ const StudentList: React.FC<StudentListProps> = ({
   classDays,
   warningMessage,
   warningType,
+  enableMassServices = false,
 }) => {
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -68,6 +70,20 @@ const StudentList: React.FC<StudentListProps> = ({
   const [newGroup, setNewGroup] = useState(groups[0]?.id || '');
   const [confirmDeleteStudent, setConfirmDeleteStudent] = useState<Student | null>(null);
 
+  type ServiceType = "B" | "L" | "P";
+
+  const SERVICES: { key: ServiceType; label: ServiceType; onClasses: string }[] = [
+    { key: "B", label: "B", onClasses: "bg-amber-700 text-white border-amber-700" },
+    { key: "L", label: "L", onClasses: "bg-yellow-400 text-slate-900 border-yellow-500" },
+    { key: "P", label: "P", onClasses: "bg-emerald-600 text-white border-emerald-600" },
+  ];
+
+  const offClasses = "bg-slate-100 text-slate-400 border-slate-200";
+
+  const [servicesToday, setServicesToday] = useState<Set<ServiceType>>(new Set());
+  const [servicesLoading, setServicesLoading] = useState(false);
+  const [servicesToggling, setServicesToggling] = useState<ServiceType | null>(null);
+
 
   const filteredStudents = useMemo(() => {
     if (filterGroupId === 'all') return students;
@@ -88,6 +104,29 @@ const StudentList: React.FC<StudentListProps> = ({
     return fullHistory.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   };
 
+  const loadStudentServicesToday = async (studentId: string) => {
+    const today = getTodayStr();
+    setServicesLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("mass_services")
+        .select("service_type")
+        .eq("student_id", studentId)
+
+      if (error) throw error;
+
+      const set = new Set<ServiceType>();
+      for (const r of (data ?? []) as any[]) set.add(r.service_type as ServiceType);
+      setServicesToday(set);
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "Error cargando servicios");
+      setServicesToday(new Set());
+    } finally {
+      setServicesLoading(false);
+    }
+  };
+
   const handleOpenDetail = (student: Student) => {
     setSelectedStudent(student);
     setTempName(student.name);
@@ -98,6 +137,9 @@ const StudentList: React.FC<StudentListProps> = ({
     setTempPhoto(student.photo);
     setTempHistory(getFullHistory(student));
     setIsEditing(false);
+    if (enableMassServices) {
+      void loadStudentServicesToday(student.id);
+    }
   };
 
   const handleContact = (student: Student) => {
@@ -180,7 +222,49 @@ const StudentList: React.FC<StudentListProps> = ({
     }
   };
 
+  const toggleServiceToday = async (serviceType: ServiceType) => {
+    if (!selectedStudent) return;
 
+    // Solo editable en modo edición
+    if (!isEditing) return;
+
+    if (servicesToggling) return;
+    setServicesToggling(serviceType);
+
+    const today = getTodayStr();
+
+    // optimista
+    const prev = new Set(servicesToday);
+    const next = new Set(prev);
+    const isOn = next.has(serviceType);
+    if (isOn) next.delete(serviceType);
+    else next.add(serviceType);
+    setServicesToday(next);
+
+    try {
+      if (!isOn) {
+        const { error } = await supabase.from("mass_services").insert({
+          student_id: selectedStudent.id,
+          service_type: serviceType,
+        });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("mass_services")
+          .delete()
+          .eq("student_id", selectedStudent.id)
+          .eq("service_type", serviceType);
+        if (error) throw error;
+      }
+    } catch (e: any) {
+      console.error(e);
+      // rollback
+      setServicesToday(prev);
+      alert(e?.message ?? "Error guardando servicio");
+    } finally {
+      setServicesToggling(null);
+    }
+  };
   const handleSave = () => {
     if (!selectedStudent) return;
 
@@ -410,6 +494,53 @@ const StudentList: React.FC<StudentListProps> = ({
                 </div>
               </div>
               <div>
+
+              {enableMassServices && (
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 mb-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-sm font-extrabold text-slate-700 uppercase tracking-widest">
+                      Servicios
+                    </h4>
+                    {servicesLoading && (
+                      <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded-lg">
+                        Cargando...
+                      </span>
+                    )}
+                  </div>
+                    <div className="flex gap-3">
+                      {SERVICES.map((svc) => {
+                        const on = servicesToday.has(svc.key);
+                        const disabled = !isEditing || !!servicesToggling;
+                        return (
+                          <button
+                            key={svc.key}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => void toggleServiceToday(svc.key)}
+                            className={[
+                              "w-11 h-11 rounded-xl border font-bold flex items-center justify-center transition-all select-none",
+                              on ? svc.onClasses : offClasses,
+                              disabled ? "opacity-80 cursor-default" : "hover:scale-[1.02]",
+                              servicesToggling === svc.key ? "opacity-60" : "",
+                            ].join(" ")}
+                            title={
+                              isEditing
+                                ? on ? `Quitar ${svc.label}` : `Marcar ${svc.label}`
+                                : "Pulsa Editar para modificar"
+                            }
+                          >
+                            {svc.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {!isEditing && (
+                    <p className="mt-3 text-xs text-slate-500">
+                      Para cambiar servicios, pulsa <span className="font-bold">Editar</span>.
+                    </p>
+                  )}
+                </div>
+              )}
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="text-lg font-bold">Asistencia Curso Actual</h4>
                   {isEditing && <button onClick={handleSave} className="text-xs font-bold text-green-600 bg-green-50 px-3 py-1.5 rounded-full flex items-center gap-1"><Save size={14} />Guardar</button>}
