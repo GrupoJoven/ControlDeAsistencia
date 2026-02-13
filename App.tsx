@@ -213,10 +213,28 @@ const App: React.FC = () => {
     if (studentsErr) throw new Error("students: " + studentsErr.message);
 
     // --- student_attendance ---
-    const { data: studAttData, error: studAttErr } = await supabase
-      .from("student_attendance")
-      .select("student_id, date, catechism, mass");
-    if (studAttErr) throw new Error("student_attendance: " + studAttErr.message);
+    let all: any[] = [];
+    let from = 0;
+    const pageSize = 1000;
+    
+    while (true) {
+      const { data, error } = await supabase
+        .from("student_attendance")
+        .select("student_id, date, catechism, mass")
+        .order("student_id", { ascending: true })
+        .order("date", { ascending: true })
+        .range(from, from + pageSize - 1);
+    
+      if (error) throw new Error("student_attendance: " + error.message);
+      if (!data || data.length === 0) break;
+    
+      all = all.concat(data);
+      if (data.length < pageSize) break;
+    
+      from += pageSize;
+    }
+    
+    const studAttData = all;
 
     const attendanceByStudent = new Map<string, AttendanceRecord[]>();
     for (const r of studAttData ?? []) {
@@ -313,29 +331,37 @@ const App: React.FC = () => {
   };
 
   const isSearchView = ['students', 'coordinator-groups', 'catechists'].includes(currentView);
-
   const updateStudentAttendance = async (
     studentId: string,
     type: "catechism" | "mass",
     status: AttendanceStatus
   ) => {
     const today = getTodayStr();
-
-    // 1) lee el estado actual local para no pisar el otro campo
-    const s = students.find(x => x.id === studentId);
-    const existing = s?.attendanceHistory?.find(h => h.date === today);
-
+  
+    // 1) Lee desde Supabase el registro actual (fuente de verdad)
+    const { data: current, error: readErr } = await supabase
+      .from("student_attendance")
+      .select("catechism, mass")
+      .eq("student_id", studentId)
+      .eq("date", today)
+      .maybeSingle();
+  
+    if (readErr) {
+      alert("Error leyendo asistencia actual: " + readErr.message);
+      return;
+    }
+  
     const next = {
       student_id: studentId,
       date: today,
-      catechism: type === "catechism" ? status : (existing?.catechism ?? "absent"),
-      mass: type === "mass" ? status : (existing?.mass ?? "absent"),
+      catechism: type === "catechism" ? status : (current?.catechism ?? "absent"),
+      mass: type === "mass" ? status : (current?.mass ?? "absent"),
     };
-
+  
     const { error } = await supabase
       .from("student_attendance")
       .upsert(next, { onConflict: "student_id,date" });
-
+  
     if (error) {
       alert("Error guardando asistencia: " + error.message);
       return;
