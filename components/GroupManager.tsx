@@ -39,6 +39,11 @@ const GroupManager: React.FC<GroupManagerProps> = ({
 
   const [isEditingCatechists, setIsEditingCatechists] = useState(false);
   const [movingStudent, setMovingStudent] = useState<Student | null>(null);
+  const [pendingMove, setPendingMove] = useState<{
+    student: Student;
+    fromGroup: Group;
+    toGroup: Group;
+  } | null>(null);
   
   const catechists = users.filter(u => u.role === 'catechist' || u.role === 'coordinator');
   const groupStudents = students.filter(s => s.groupId === selectedGroup?.id);
@@ -49,12 +54,16 @@ const GroupManager: React.FC<GroupManagerProps> = ({
 
   const startMoveStudent = (s: Student) => setMovingStudent(s);
 
-  const moveStudentToGroup = async (newGroupId: string) => {
-    if (!movingStudent) return;
-    await onUpdateStudent({ ...movingStudent, groupId: newGroupId });
+  const confirmMoveStudent = async () => {
+    if (!pendingMove) return;
+
+    const { student, toGroup } = pendingMove;
+
+    await onUpdateStudent({ ...student, groupId: toGroup.id });
+
+    setPendingMove(null);
     setMovingStudent(null);
   };
-
 
   const handleUpdateName = async () => {
     if (!selectedGroup) return;
@@ -99,6 +108,35 @@ const GroupManager: React.FC<GroupManagerProps> = ({
           </div>
         ))}
       </div>
+      {pendingMove && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-slate-900/50"
+            onClick={() => setPendingMove(null)}
+          />
+          <div className="relative bg-white w-full max-w-md mx-4 rounded-2xl shadow-2xl border border-slate-100 overflow-hidden">
+            <div className="p-5 border-b border-slate-100">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Confirmar cambio</p>
+              <p className="font-bold text-slate-900">¿Seguro que quieres cambiar a {pendingMove.student.name} del grupo {pendingMove.fromGroup.name} al grupo {pendingMove.toGroup.name}?</p>
+            </div>
+
+            <div className="p-5 flex gap-3 justify-end">
+              <button
+                onClick={() => setPendingMove(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => void confirmMoveStudent()}
+                className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700"
+              >
+                Continuar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedGroup && (
         <>
@@ -269,7 +307,10 @@ const GroupManager: React.FC<GroupManagerProps> = ({
                     .map(g => (
                       <button
                         key={g.id}
-                        onClick={() => void moveStudentToGroup(g.id)}
+                        onClick={() => {
+                          if (!movingStudent || !selectedGroup) return;
+                          setPendingMove({ student: movingStudent, fromGroup: selectedGroup, toGroup: g });
+                        }}
                         className="w-full flex items-center justify-between p-4 rounded-xl border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50 transition-colors text-left"
                       >
                         <span className="font-bold text-slate-800">{g.name}</span>
