@@ -12,7 +12,7 @@ import {
   Clock
 } from 'lucide-react';
 import { Student, getTodayStr, AttendanceStatus } from '../types';
-import { draftParentEmail } from '../services/geminiService';
+import { supabase } from "../src/lib/supabaseClient";
 
 interface AttendanceTrackerProps {
   students: Student[];
@@ -26,24 +26,25 @@ const AttendanceTracker: React.FC<AttendanceTrackerProps> = ({ students, onUpdat
   const todayRaw = getTodayStr();
   const todayPretty = new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const isClassDay = classDays.includes(todayRaw);
-  
-  const [draftingEmail, setDraftingEmail] = useState<string | null>(null);
-  const [emailContent, setEmailContent] = useState('');
-  const [isSending, setIsSending] = useState(false);
 
-  const handleDraftEmail = async (student: Student) => {
-    setDraftingEmail(student.id);
-    const content = await draftParentEmail(student.name, new Date().toLocaleDateString());
-    setEmailContent(content || '');
-  };
+  const [confirmOne, setConfirmOne] = useState<{
+    student: Student;
+    absenceLabel: string;
+  } | null>(null);
 
-  const sendEmail = () => {
-    setIsSending(true);
-    setTimeout(() => {
-      setIsSending(false);
-      setDraftingEmail(null);
-      alert('Email enviado correctamente');
-    }, 1500);
+  const [confirmAll, setConfirmAll] = useState<{
+    totalTargets: number;
+  } | null>(null);
+
+  const [isSendingOne, setIsSendingOne] = useState(false);
+  const [isSendingAll, setIsSendingAll] = useState(false);
+
+  const getAbsenceLabel = (cat: AttendanceStatus, mass: AttendanceStatus) => {
+    const catAbsent = cat === "absent";
+    const massAbsent = mass === "absent";
+    if (catAbsent && massAbsent) return "ni a catequesis ni a misa";
+    if (catAbsent) return "catequesis";
+    return "misa";
   };
 
   const cycleStatus = (current: AttendanceStatus): AttendanceStatus => {
@@ -56,6 +57,73 @@ const AttendanceTracker: React.FC<AttendanceTrackerProps> = ({ students, onUpdat
     if (status === 'present') return `${activeColor} text-white shadow-md`;
     if (status === 'late') return `bg-amber-100 text-amber-700 border-2 border-amber-400`;
     return 'bg-slate-100 text-slate-400 hover:bg-slate-200';
+  };
+
+  const sendStandardEmailOne = async () => {
+    if (!confirmOne) return;
+
+    const st: any = confirmOne.student;
+    const parentEmail = st.parent_email || st.parentEmail;
+    if (!parentEmail) {
+      alert("Este alumno no tiene email de padres (parent_email).");
+      setConfirmOne(null);
+      return;
+    }
+
+    setIsSendingOne(true);
+    console.log("SUPABASE URL", import.meta.env.VITE_SUPABASE_URL);
+    console.log("SUPABASE ANON KEY exists?", Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY));
+    try {
+      const { data: { session }, error: sErr } = await supabase.auth.getSession();
+      if (sErr || !session?.access_token) {
+        alert("No hay sesión válida. Cierra sesión y vuelve a entrar.");
+        setIsSendingOne(false);
+        return;
+      }
+
+      const { error } = await supabase.functions.invoke("send-absence-email", {
+        body: {
+          student_id: confirmOne.student.id,
+          date: todayRaw,
+          absence_label: confirmOne.absenceLabel,
+        },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (error) {
+        console.log("invoke error", error);
+        // supabase-js suele meter details en error.context o error.message; si no, lo vemos por logs
+        throw error;
+      }
+
+      alert("Email enviado correctamente.");
+      setConfirmOne(null);
+    } catch (e: any) {
+      alert("Error enviando email: " + (e?.message ?? String(e)));
+    } finally {
+      setIsSendingOne(false);
+    }
+  };
+
+  const sendStandardEmailAll = async () => {
+    setIsSendingAll(true);
+    try {
+      const student_ids = students.map(s => s.id);
+      const { data, error } = await supabase.functions.invoke("send-absence-emails-bulk", {
+        body: { date: todayRaw, student_ids }
+      });
+      if (error) throw error;
+
+      // data puede traer resumen: sent, skipped_no_email, errors
+      alert(`Proceso terminado. Enviados: ${data?.sent ?? "?"}, sin email: ${data?.skipped_no_email ?? "?"}, errores: ${data?.errors ?? 0}`);
+      setConfirmAll(null);
+    } catch (e: any) {
+      alert("Error en envío masivo: " + (e?.message ?? String(e)));
+    } finally {
+      setIsSendingAll(false);
+    }
   };
 
   if (!isClassDay) {
@@ -84,8 +152,36 @@ const AttendanceTracker: React.FC<AttendanceTrackerProps> = ({ students, onUpdat
             <Church size={24} className="shrink-0" />
             Control Diario
           </h2>
-          <p className="text-indigo-100 opacity-90 text-xs lg:text-sm mt-1 capitalize">{todayPretty}</p>
+          <p className="text-indigo-100 opacity-90 text-xs lg:text-sm mt-1 capitalize">
+            {todayPretty}
+          </p>
         </div>
+      
+        {(() => {
+          const targets = students.filter(st => {
+            const r = st.attendanceHistory.find(h => h.date === todayRaw);
+            const cat = r?.catechism || "absent";
+            const ms  = r?.mass || "absent";
+            const faltadoAlgo = (cat === "absent" || ms === "absent");
+            const hasEmail = Boolean(
+              (st as any).parent_email || (st as any).parentEmail
+            );
+            return faltadoAlgo && hasEmail;
+          });
+
+          if (targets.length === 0) return null;
+
+          return (
+            <button
+              onClick={() => {
+                setConfirmAll({ totalTargets: targets.length });
+              }}
+              className="bg-white/15 hover:bg-white/25 border border-white/20 text-white font-bold text-[10px] sm:text-xs px-3 py-2 rounded-xl transition-colors"
+            >
+              INFORMAR A TODOS LOS PADRES ({targets.length})
+            </button>
+          );
+        })()}
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -144,9 +240,16 @@ const AttendanceTracker: React.FC<AttendanceTrackerProps> = ({ students, onUpdat
                     </td>
                     <td className="px-2 lg:px-6 py-4 text-right">
                       {showAviso && (
-                        <button 
-                          onClick={() => handleDraftEmail(student)}
+                        <button
+                          onClick={() => {
+                            const record = student.attendanceHistory.find(h => h.date === todayRaw);
+                            const statusCat = record?.catechism || "absent";
+                            const statusMass = record?.mass || "absent";
+                            const absenceLabel = getAbsenceLabel(statusCat, statusMass);
+                            setConfirmOne({ student, absenceLabel });
+                          }}
                           className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors inline-flex items-center"
+                          title="Enviar aviso a los padres"
                         >
                           <Mail size={16} />
                         </button>
@@ -160,24 +263,63 @@ const AttendanceTracker: React.FC<AttendanceTrackerProps> = ({ students, onUpdat
         </div>
       </div>
 
-      {draftingEmail && (
+      {confirmOne && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden">
             <div className="p-6 border-b border-slate-200 flex items-center justify-between">
-              <h3 className="text-lg lg:text-xl font-bold text-slate-900 flex items-center gap-2"><Mail className="text-indigo-600" />Aviso Pastoral</h3>
-              <button onClick={() => setDraftingEmail(null)} className="text-slate-400 hover:text-slate-600 p-1"><X size={24} /></button>
+              <h3 className="text-lg font-bold text-slate-900">Confirmar envío</h3>
+              <button onClick={() => setConfirmOne(null)} className="text-slate-400 hover:text-slate-600 p-1"><X size={24} /></button>
             </div>
-            <div className="p-6 overflow-y-auto space-y-4">
-              <textarea 
-                className="w-full h-48 lg:h-64 p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                value={emailContent}
-                onChange={(e) => setEmailContent(e.target.value)}
-              />
+
+            <div className="p-6 text-sm text-slate-700 space-y-2">
+              <p>
+                ¿Seguro que quieres enviar un correo a los padres de <span className="font-bold">{confirmOne.student.name}</span>
+                {" "}informando de que hoy no ha asistido a <span className="font-bold">{confirmOne.absenceLabel}</span>?
+              </p>
+              <p className="text-xs text-slate-500">
+                Se enviará desde no-reply@sanpas.es (si la configuración del servidor está correcta).
+              </p>
             </div>
-            <div className="p-6 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row justify-end gap-3">
-              <button onClick={() => setDraftingEmail(null)} className="order-2 sm:order-1 px-6 py-2 rounded-xl text-slate-600 font-bold text-sm">Cancelar</button>
-              <button onClick={sendEmail} disabled={isSending} className="order-1 sm:order-2 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-indigo-100 text-sm">
-                {isSending ? 'Enviando...' : 'Enviar Ahora'}
+
+            <div className="p-6 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
+              <button onClick={() => setConfirmOne(null)} className="px-6 py-2 rounded-xl text-slate-600 font-bold text-sm">Cancelar</button>
+              <button
+                onClick={() => void sendStandardEmailOne()}
+                disabled={isSendingOne}
+                className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-bold rounded-xl text-sm"
+              >
+                {isSendingOne ? "Enviando..." : "Enviar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmAll && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-slate-200 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-900">Confirmar envío masivo</h3>
+              <button onClick={() => setConfirmAll(null)} className="text-slate-400 hover:text-slate-600 p-1"><X size={24} /></button>
+            </div>
+
+            <div className="p-6 text-sm text-slate-700 space-y-2">
+              <p>
+                ¿Seguro que quieres enviar correos personalizados a todos los padres de los niños que hoy han faltado a algo?
+              </p>
+              <p className="text-xs text-slate-500">
+                Se enviarán <span className="font-bold">{confirmAll.totalTargets}</span> correos personalizados
+                (solo a alumnos que hoy han faltado a algo y tienen email de padres registrado).
+              </p>
+            </div>
+
+            <div className="p-6 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
+              <button onClick={() => setConfirmAll(null)} className="px-6 py-2 rounded-xl text-slate-600 font-bold text-sm">Cancelar</button>
+              <button
+                onClick={() => void sendStandardEmailAll()}
+                disabled={isSendingAll || confirmAll.totalTargets === 0}
+                className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-bold rounded-xl text-sm"
+              >
+                {isSendingAll ? "Enviando..." : "Enviar a todos"}
               </button>
             </div>
           </div>
