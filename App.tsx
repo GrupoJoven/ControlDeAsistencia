@@ -180,11 +180,6 @@ const App: React.FC = () => {
     // si todavía no hay activeGroupId o ya no existe, elige el primero
     setActiveGroupId(prev => (prev && myGroupIds.includes(prev) ? prev : (myGroupIds[0] ?? null)));
 
-
-
-
-
-
     // --- profiles (users) ---
     const { data: profData, error: profErr } = await supabase
       .from("profiles")
@@ -286,22 +281,44 @@ const App: React.FC = () => {
 
     setClassDays((classDaysData ?? []).map(d => String(d.date)));
 
-    // --- catechist_attendance (solo si coordinator, o para el propio usuario) ---
-    const { data: catAttData, error: catAttErr } = await supabase
-      .from("catechist_attendance")
-      .select("profile_id, date, type, ref_id, catechism, mass, status, id");
-    if (catAttErr) throw new Error("catechist_attendance: " + catAttErr.message);
+    // --- catechist_attendance (clase: catechism/mass) ---
+    const today = getTodayStr();
+    // Usa la vista normalizada (NULL => absent)
+    const { data: catClassData, error: catClassErr } = await supabase
+      .from("v_catechist_attendance_norm")
+      .select("profile_id, date, catechism, mass");
 
+    if (catClassErr) throw new Error("v_catechist_attendance_norm: " + catClassErr.message);
+
+    // --- catechist_attendance_events (eventos) ---
+    const { data: catEventData, error: catEventErr } = await supabase
+      .from("catechist_attendance_events")
+      .select("profile_id, event_id, date, status")
+      .eq("date", today);
+
+    if (catEventErr) throw new Error("catechist_attendance_events: " + catEventErr.message);
+
+    // Construir attendanceHistory en el shape que espera la UI
     const catAttendanceByProfile = new Map<string, CatechistAttendanceRecord[]>();
-    for (const r of catAttData ?? []) {
+
+    for (const r of catClassData ?? []) {
       const rec: CatechistAttendanceRecord = {
+        type: "class" as any,
         date: String(r.date),
-        type: r.type as any,
-        refId: r.ref_id ?? undefined,
-        status: (r.status as any) ?? undefined,
-        catechism: (r.catechism as any) ?? undefined,
-        mass: (r.mass as any) ?? undefined,
-        // si tu tipo tiene status en event, lo ajustamos luego
+        catechism: (r.catechism ?? "absent") as any,
+        mass: (r.mass ?? "absent") as any,
+      };
+      const arr = catAttendanceByProfile.get(r.profile_id) ?? [];
+      arr.push(rec);
+      catAttendanceByProfile.set(r.profile_id, arr);
+    }
+
+    for (const r of catEventData ?? []) {
+      const rec: CatechistAttendanceRecord = {
+        type: "event" as any,
+        refId: r.event_id,
+        date: String(r.date),
+        status: (r.status ?? "absent") as any,
       };
       const arr = catAttendanceByProfile.get(r.profile_id) ?? [];
       arr.push(rec);
@@ -312,6 +329,7 @@ const App: React.FC = () => {
       ...u,
       attendanceHistory: catAttendanceByProfile.get(u.id) ?? [],
     }));
+
     setUsers(usersWithAttendance);
   };
 
@@ -383,6 +401,8 @@ const App: React.FC = () => {
   };
 
 
+  const normalizeTeamStatus = (s: AttendanceStatus): AttendanceStatus => s;
+
   const updateCatechistAttendance = async (
     profileId: string,
     type: "class" | "event",
@@ -390,38 +410,105 @@ const App: React.FC = () => {
     refId?: string,
     subType?: "catechism" | "mass"
   ) => {
-    const date = refId
-      ? (events.find(e => e.id === refId)?.date || getTodayStr())
-      : getTodayStr();
+    const today = getTodayStr();
+    const safeStatus = normalizeTeamStatus(status);
 
-    const payload: any = {
-      profile_id: profileId,
-      date,
-      type,
-      ref_id: refId ?? null,
-    };
+    try {
+      if (type === "class") {
+        if (!subType) return;
 
-    if (type === "event") {
-      payload.status = status;
-      payload.catechism = null;
-      payload.mass = null;
-    } else {
-      payload.status = null;
-      if (subType === "catechism") payload.catechism = status;
-      if (subType === "mass") payload.mass = status;
+        // IMPORTANTE: no pisar el otro campo.
+        // Busca el “estado actual” local del catequista para HOY.
+        // Ajusta 'users' y el shape de attendanceHistory a tu modelo real.
+        const u = users.find((x: any) => x.id === profileId);
+        const { data: current, error: readErr } = await supabase
+          .from("catechist_attendance")
+          .select("catechism, mass")
+          .eq("profile_id", profileId)
+          .eq("date", today)
+          .maybeSingle();
+
+        if (readErr) throw readErr;
+
+        const next = {
+          profile_id: profileId,
+          date: today,
+          catechism: subType === "catechism" ? safeStatus : (current?.catechism ?? "absent"),
+          mass:      subType === "mass"     ? safeStatus : (current?.mass      ?? "absent"),
+        };
+
+        const { error } = await supabase
+          .from("catechist_attendance")
+          .upsert(next, { onConflict: "profile_id,date" });
+
+        if (error) throw error;
+
+        // Actualización optimista local (sin recargar todo)
+        setUsers((prev: any[]) =>
+          prev.map((x: any) => {
+            if (x.id !== profileId) return x;
+            const hist = Array.isArray(x.attendanceHistory) ? [...x.attendanceHistory] : [];
+
+            // elimina el registro "class de hoy" anterior (si existía)
+            const filtered = hist.filter((h: any) => !(h.type === "class" && h.date === today));
+
+            filtered.push({
+              type: "class",
+              date: today,
+              catechism: next.catechism,
+              mass: next.mass,
+            });
+
+            return { ...x, attendanceHistory: filtered };
+          })
+        );
+
+        return;
+      }
+
+      // type === "event"
+      if (!refId) return;
+
+      // La fecha para event: yo recomiendo usar SIEMPRE la del evento (no "hoy")
+      // porque en BD tienes date también en catechist_attendance_events.
+      const eventDate = events.find((e: any) => e.id === refId)?.date ?? today;
+
+      const payload = {
+        profile_id: profileId,
+        event_id: refId,
+        date: eventDate,
+        status: safeStatus,
+      };
+
+      const { error } = await supabase
+        .from("catechist_attendance_events")
+        .upsert(payload, { onConflict: "profile_id,event_id,date" });
+
+      if (error) throw error;
+
+      setUsers((prev: any[]) =>
+        prev.map((x: any) => {
+          if (x.id !== profileId) return x;
+          const hist = Array.isArray(x.attendanceHistory) ? [...x.attendanceHistory] : [];
+
+          // elimina registro anterior de ese evento
+          const filtered = hist.filter(
+            (h: any) => !(h.type === "event" && h.refId === refId)
+          );
+
+          filtered.push({
+            type: "event",
+            refId,
+            date: eventDate,
+            status: safeStatus,
+          });
+
+          return { ...x, attendanceHistory: filtered };
+        })
+      );
+    } catch (e: any) {
+      alert("Error guardando asistencia catequista: " + (e?.message ?? String(e)));
     }
-
-    const { error } = await supabase
-      .from("catechist_attendance")
-      .upsert(payload, { onConflict: "profile_id,date,type,ref_id" });
-
-    if (error) {
-      alert("Error guardando asistencia catequista: " + error.message);
-      return;
-    }
-
-    // refresco simple (luego optimizamos si quieres)
-    await loadBaseData(currentUser!);
   };
 
 
