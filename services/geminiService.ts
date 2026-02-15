@@ -30,7 +30,7 @@ export const generateAttendanceReport = async (students: Student[]) => {
       
       INSTRUCCIONES:
       1. Identifica a los niños con asistencia perfecta o excelente y destaca el valor de su compromiso.
-      2. Identifica patrones preocupantes (ej. niños que vienen a catequesis pero se saltan la misa).
+      2. Identifica patrones preocupantes (ej. niños que vienen a catequesis pero se saltan la misa o viceversa).
       3. Señala a los niños en riesgo de abandono.
       4. Proporciona recomendaciones pastorales ESPECÍFICAS para estos casos, no consejos genéricos. Menciona nombres propios en el análisis para que el informe sea útil y real.
       5. El tono debe ser profesional, cercano y orientado a la misión evangelizadora de la parroquia.`,

@@ -1165,7 +1165,18 @@ const App: React.FC = () => {
               onRemove={(id) => void removeEvent(id)}
             />
           )}
-          {currentView === 'reports' && <Reports students={students} currentUser={currentUser} groups={groups} classDays={classDays} users={users} events={events} />}
+          {currentView === 'reports' && (
+            <Reports
+              students={students}
+              currentUser={currentUser}
+              groups={groups}
+              classDays={classDays}
+              users={users}
+              events={events}
+              activeGroupId={activeGroupId}
+              myGroups={myGroups}
+            />
+          )}
           {currentView === 'account' && <AccountSettings user={currentUser} onUpdate={updateUser} />}
           {currentView === 'my-account' && <MyAccount user={currentUser} groups={groups} activeGroupId={activeGroupId} />}
 
