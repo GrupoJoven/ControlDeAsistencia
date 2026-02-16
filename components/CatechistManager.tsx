@@ -73,40 +73,88 @@ const CatechistManager: React.FC<CatechistManagerProps> = ({
   const [photo, setPhoto] = useState<string | undefined>(undefined);
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [tempHistory, setTempHistory] = useState<CatechistAttendanceRecord[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  const cycleStatusValue = (current: AttendanceStatus): AttendanceStatus => {
+    if (current === "absent") return "present";
+    if (current === "present") return "late";
+    return "absent";
+  };
+
+  const loadFullHistoryFromDB = async (userId: string) => {
+    const today = getTodayStr();
+    const range = getAcademicYearRange(today);
+    const end = today < range.end ? today : range.end;
+
+    // Días lectivos y eventos relevantes (solo pasado)
+    const relevantClassDays = classDays.filter(d => d >= range.start && d <= end);
+    const relevantEvents = events.filter(e => e.date >= range.start && e.date <= end);
+
+    // 1) Clases (catechist_attendance)
+    const { data: classRows, error: classErr } = await supabase
+      .from("catechist_attendance")
+      .select("date, catechism, mass")
+      .eq("profile_id", userId)
+      .gte("date", range.start)
+      .lte("date", end);
+
+    if (classErr) throw classErr;
+
+    const classByDate = new Map<string, { catechism: AttendanceStatus; mass: AttendanceStatus }>();
+    for (const r of classRows ?? []) {
+      classByDate.set(String(r.date), {
+        catechism: ((r.catechism ?? "absent") as AttendanceStatus),
+        mass: ((r.mass ?? "absent") as AttendanceStatus),
+      });
+    }
+
+    // 2) Eventos (catechist_attendance_events)
+    const { data: eventRows, error: eventErr } = await supabase
+      .from("catechist_attendance_events")
+      .select("event_id, date, status")
+      .eq("profile_id", userId)
+      .gte("date", range.start)
+      .lte("date", end);
+
+    if (eventErr) throw eventErr;
+
+    const eventById = new Map<string, AttendanceStatus>();
+    for (const r of eventRows ?? []) {
+      if (!r.event_id) continue;
+      eventById.set(String(r.event_id), ((r.status ?? "absent") as AttendanceStatus));
+    }
+
+    // 3) Construir histórico completo (rellenando ausencias)
+    const history: CatechistAttendanceRecord[] = [];
+
+    for (const day of relevantClassDays) {
+      const v = classByDate.get(day);
+      history.push({
+        type: "class",
+        date: day,
+        catechism: v?.catechism ?? "absent",
+        mass: v?.mass ?? "absent",
+      });
+    }
+
+    for (const ev of relevantEvents) {
+      const st = eventById.get(ev.id) ?? "absent";
+      history.push({
+        type: "event",
+        date: ev.date,
+        status: st,
+        refId: ev.id,
+      });
+    }
+
+    // Sort desc
+    history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return history;
+  };
 
   // Use filtered list if available, otherwise filter by role
   const catechistsToDisplay = filteredUsers || users;
 
-  /**
-   * Generates full attendance history (classes and events) for the current academic year.
-   */
-  const getFullHistory = (user: User) => {
-    const today = getTodayStr();
-    const range = getAcademicYearRange(today);
-    
-    // Past class days this year
-    const relevantClassDays = classDays.filter(day => day >= range.start && day <= range.end && day <= today);
-    // Past events this year
-    const relevantEvents = events.filter(e => e.date >= range.start && e.date <= range.end && e.date <= today);
-
-    const history: CatechistAttendanceRecord[] = [];
-    const existingHistory = user.attendanceHistory || [];
-
-    // Add classes
-    relevantClassDays.forEach(day => {
-      const existing = existingHistory.find(h => h.date === day && h.type === 'class');
-      history.push(existing ? { ...existing } : { date: day, type: 'class', catechism: 'absent', mass: 'absent' });
-    });
-
-    // Add events
-    relevantEvents.forEach(event => {
-      const existing = existingHistory.find(h => h.refId === event.id && h.type === 'event');
-      history.push(existing ? { ...existing } : { date: event.date, type: 'event', status: 'absent', refId: event.id });
-    });
-
-    // Sort descending
-    return history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  };
 
   const resetForm = () => {
     setName(''); setEmail(''); setPassword(''); setBirthDate(''); setPhoto(undefined); setSelectedGroupIds([]); setTempHistory([]);
@@ -115,16 +163,27 @@ const CatechistManager: React.FC<CatechistManagerProps> = ({
     setIsEditing(false);
   };
 
-  const handleOpenDetail = (user: User) => {
+  const handleOpenDetail = async (user: User) => {
     setSelectedUser(user);
     setName(user.name);
     setEmail(user.email);
-    setPassword(''); // Crucial: Do not show existing password to coordinator
+    setPassword("");
     setBirthDate((user.birthDate || "").slice(0, 10));
     setPhoto(user.photo);
     setSelectedGroupIds(getUserGroupIds(user.id));
-    setTempHistory(getFullHistory(user));
     setIsEditing(false);
+
+    // Cargar histórico desde BD
+    setIsLoadingHistory(true);
+    try {
+      const full = await loadFullHistoryFromDB(user.id);
+      setTempHistory(full);
+    } catch (e: any) {
+      alert("Error cargando histórico: " + (e?.message ?? String(e)));
+      setTempHistory([]); // evita estado raro
+    } finally {
+      setIsLoadingHistory(false);
+    }
   };
 
   const handleSave = async () => {
@@ -155,6 +214,44 @@ const CatechistManager: React.FC<CatechistManagerProps> = ({
 
       onUpdateUser(updated);
       await onSetUserGroups(selectedUser.id, selectedGroupIds);
+      // 1) Persistir histórico en BD (tablas nuevas)
+      const classUpserts = tempHistory
+        .filter(r => r.type === "class")
+        .map(r => ({
+          profile_id: selectedUser.id,
+          date: r.date,
+          catechism: r.catechism ?? "absent",
+          mass: r.mass ?? "absent",
+        }));
+
+      if (classUpserts.length > 0) {
+        const { error } = await supabase
+          .from("catechist_attendance")
+          .upsert(classUpserts, { onConflict: "profile_id,date" });
+        if (error) {
+          alert("Error guardando histórico de clases: " + error.message);
+          return;
+        }
+      }
+
+      const eventUpserts = tempHistory
+        .filter(r => r.type === "event" && r.refId)
+        .map(r => ({
+          profile_id: selectedUser.id,
+          event_id: r.refId!,
+          date: r.date,
+          status: r.status ?? "absent",
+        }));
+
+      if (eventUpserts.length > 0) {
+        const { error } = await supabase
+          .from("catechist_attendance_events")
+          .upsert(eventUpserts, { onConflict: "profile_id,event_id,date" });
+        if (error) {
+          alert("Error guardando histórico de eventos: " + error.message);
+          return;
+        }
+      }
 
       resetForm();
     }
@@ -219,22 +316,21 @@ const CatechistManager: React.FC<CatechistManagerProps> = ({
   };
 
 
-  const cycleStatus = (index: number, subType?: 'catechism' | 'mass') => {
+  const cycleStatus = (index: number, subType?: "catechism" | "mass") => {
     if (!isEditing) return;
+
     const h = [...tempHistory];
-    const type = h[index].type;
-    
-    if (type === 'class') {
-      const current = h[index][subType!];
-      let next: AttendanceStatus = 'absent';
-      if (current === 'absent') next = 'present';
-      else if (current === 'present') next = 'late';
-      h[index][subType!] = next;
+    const rec = { ...h[index] };
+
+    if (rec.type === "class") {
+      const current = (rec as any)[subType!] as AttendanceStatus;
+      (rec as any)[subType!] = cycleStatusValue(current);
     } else {
-      const current = h[index].status;
-      h[index].status = current === 'present' ? 'absent' : 'present';
+      const current = rec.status ?? "absent";
+      rec.status = cycleStatusValue(current);
     }
-    
+
+    h[index] = rec;
     setTempHistory(h);
   };
 
@@ -332,7 +428,7 @@ const CatechistManager: React.FC<CatechistManagerProps> = ({
           return (
             <div 
               key={cat.id} 
-              onClick={() => handleOpenDetail(cat)}
+              onClick={() => { void handleOpenDetail(cat); }}
               className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col items-center text-center group"
             >
               <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center font-bold text-indigo-700 text-xl overflow-hidden mb-4 shrink-0 group-hover:scale-105 transition-transform">
@@ -509,7 +605,7 @@ const CatechistManager: React.FC<CatechistManagerProps> = ({
                                 <button 
                                   disabled={!isEditing}
                                   onClick={() => cycleStatus(i, 'catechism')}
-                                  className={`p-1.5 sm:p-2 rounded-lg text-[10px] font-bold transition-all ${record.catechism === 'present' ? 'bg-indigo-600 text-white shadow-md' : record.catechism === 'late' ? 'bg-amber-100 text-amber-700 border border-amber-400' : 'bg-slate-100 text-slate-400'}`}
+                                  className={`p-1.5 sm:p-2 rounded-lg text-[10px] font-bold transition-all ${record.catechism === 'present' ? 'bg-indigo-600 text-white shadow-md' : record.catechism === 'late' ? 'bg-amber-100 text-amber-700 border-2 border-amber-400' : 'bg-slate-100 text-slate-400'}`}
                                 >
                                   {record.catechism === 'late' ? <Clock size={12}/> : <BookOpen size={12}/>}
                                 </button>
@@ -519,7 +615,7 @@ const CatechistManager: React.FC<CatechistManagerProps> = ({
                                 <button 
                                   disabled={!isEditing}
                                   onClick={() => cycleStatus(i, 'mass')}
-                                  className={`p-1.5 sm:p-2 rounded-lg text-[10px] font-bold transition-all ${record.mass === 'present' ? 'bg-amber-500 text-white shadow-md' : record.mass === 'late' ? 'bg-amber-100 text-amber-700 border border-amber-400' : 'bg-slate-100 text-slate-400'}`}
+                                  className={`p-1.5 sm:p-2 rounded-lg text-[10px] font-bold transition-all ${record.mass === 'present' ? 'bg-amber-500 text-white shadow-md' : record.mass === 'late' ? 'bg-amber-100 text-amber-700 border-2 border-amber-400' : 'bg-slate-100 text-slate-400'}`}
                                 >
                                   {record.mass === 'late' ? <Clock size={12}/> : <Church size={12}/>}
                                 </button>
@@ -529,10 +625,16 @@ const CatechistManager: React.FC<CatechistManagerProps> = ({
                             <button 
                               disabled={!isEditing}
                               onClick={() => cycleStatus(i)}
-                              className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-[10px] font-bold flex items-center gap-1.5 transition-all ${record.status === 'present' ? 'bg-green-600 text-white shadow-md' : 'bg-slate-100 text-slate-400'}`}
+                              className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-[10px] font-bold flex items-center gap-1.5 transition-all ${
+                                record.status === "present"
+                                  ? "bg-green-600 text-white shadow-md"
+                                  : record.status === "late"
+                                    ? "bg-amber-100 text-amber-700 border-2 border-amber-400"
+                                    : "bg-slate-100 text-slate-400"
+                              }`}
                             >
-                              {record.status === 'present' ? <Check size={12}/> : <X size={12}/>}
-                              {record.status === 'present' ? 'SI' : 'NO'}
+                              {record.status === "present" ? <Check size={12}/> : record.status === "late" ? <Clock size={12}/> : <X size={12}/>}
+                              {record.status === "present" ? "SI" : record.status === "late" ? "TARDE" : "NO"}
                             </button>
                           )}
                         </div>
