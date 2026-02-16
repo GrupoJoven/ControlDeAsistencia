@@ -315,6 +315,76 @@ const CatechistManager: React.FC<CatechistManagerProps> = ({
     }
   };
 
+  const deleteStorageFolder = async (prefix: string) => {
+    // En Supabase Storage no existen "carpetas" reales.
+    // Para borrar una subcarpeta, listamos los objetos bajo el prefijo y los eliminamos.
+    const bucket = supabase.storage.from("media");
+
+    let offset = 0;
+    const limit = 100;
+    while (true) {
+      const { data, error } = await bucket.list(prefix, {
+        limit,
+        offset,
+        sortBy: { column: "name", order: "asc" },
+      });
+      if (error) throw error;
+
+      const items = data ?? [];
+      if (items.length === 0) break;
+
+      const paths = items
+        .filter((it: any) => !!it?.name)
+        .map((it: any) => `${prefix}/${it.name}`);
+
+      if (paths.length > 0) {
+        const { error: rmErr } = await bucket.remove(paths);
+        if (rmErr) throw rmErr;
+      }
+
+      if (items.length < limit) break;
+      offset += limit;
+    }
+  };
+
+  const handlePhotoDelete = async () => {
+    if (!selectedUser?.id) return;
+
+    if (!photo) {
+      alert("Este catequista no tiene foto de perfil.");
+      return;
+    }
+
+    const ok = window.confirm(
+      "¿Eliminar la foto de perfil? Se borrará del Storage y se quitará del perfil."
+    );
+    if (!ok) return;
+
+    try {
+      const prefix = `profiles/${selectedUser.id}`;
+
+      // 1) borrar subcarpeta completa (todos los objetos bajo profiles/<id>/)
+      await deleteStorageFolder(prefix);
+
+      // 2) limpiar photo_path en BD
+      const { error: dbErr } = await supabase
+        .from("profiles")
+        .update({ photo_path: null })
+        .eq("id", selectedUser.id);
+
+      if (dbErr) {
+        alert("Foto borrada del Storage, pero no se pudo actualizar el perfil: " + dbErr.message);
+      }
+
+      // 3) reflejo en UI y refresh global
+      setPhoto(undefined);
+      onUpdateUser({ ...selectedUser, photo: undefined, name, birthDate });
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "Error eliminando foto");
+    }
+  };
+
 
   const cycleStatus = (index: number, subType?: "catechism" | "mass") => {
     if (!isEditing) return;
@@ -485,7 +555,19 @@ const CatechistManager: React.FC<CatechistManagerProps> = ({
                 </div>
                 {isEditing && (
                   <>
-                    <button onClick={() => fileInputRef.current?.click()} className="absolute bottom-[-4px] right-[-4px] p-2 bg-indigo-600 text-white rounded-xl shadow-lg hover:bg-indigo-700 transition-colors"><Camera size={16} /></button>
+                    <div className="absolute bottom-[-4px] right-[-4px] flex items-center gap-2">
+                      <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-indigo-600 text-white rounded-xl shadow-lg hover:bg-indigo-700 transition-colors"><Camera size={16} /></button>
+                      {photo && (
+                        <button
+                          type="button"
+                          onClick={() => void handlePhotoDelete()}
+                          className="p-2 bg-white text-red-600 rounded-xl shadow-lg hover:bg-slate-50 transition-colors"
+                          title="Eliminar foto"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
                     <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handlePhotoUpload} />
                   </>
                 )}

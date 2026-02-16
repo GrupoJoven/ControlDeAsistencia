@@ -50,6 +50,9 @@ const App: React.FC = () => {
   type GroupCatechistLink = { group_id: string; profile_id: string };
 
   const [groupCatechistLinks, setGroupCatechistLinks] = useState<GroupCatechistLink[]>([]);
+  type SchoolName = { id: string; name: string };
+
+  const [schoolNames, setSchoolNames] = useState<SchoolName[]>([]);
 
   // Para catequistas con varios grupos: cuál está “activo” en la UI
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
@@ -78,12 +81,27 @@ const App: React.FC = () => {
       };
 
       setCurrentUser(appUser);
+      await loadSchoolNames();
       await loadBaseData(appUser);
     };
 
     void boot();
   }, []);
 
+
+  const loadSchoolNames = async () => {
+    const { data, error } = await supabase
+      .from("school_names")
+      .select("id, name")
+      .order("name", { ascending: true });
+
+    if (error) {
+      console.error("Error cargando colegios:", error.message);
+      setSchoolNames([]);
+      return;
+    }
+    setSchoolNames(data ?? []);
+  };
   const handleLogin = async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
@@ -124,6 +142,7 @@ const App: React.FC = () => {
   
     try {
       setCurrentUser(appUser);
+      await loadSchoolNames();
       await loadBaseData(appUser);
       setCurrentView("dashboard");
     } catch (e: any) {
@@ -149,7 +168,6 @@ const App: React.FC = () => {
       if (error || !data?.signedUrl) return "";
       return data.signedUrl;
     };
-
     // --- groups ---
     const { data: groupsData, error: groupsErr } = await supabase
       .from("groups")
@@ -250,7 +268,7 @@ const App: React.FC = () => {
       name: s.name,
       email: s.email ?? "",
       parentEmail: s.parent_email ?? "",
-      school: s.school ?? "",
+      school: s.school ?? null,
       birthDate: s.birth_date ? String(s.birth_date).slice(0, 10) : "",
       groupId: s.group_id ?? "",
       photo: await signMediaUrl(s.photo_path),
@@ -562,11 +580,13 @@ const App: React.FC = () => {
 
   const updateStudent = async (updatedStudent: Student) => {
     // 1) actualizar datos del alumno (students)
+    const schoolNormalized =
+      (updatedStudent.school ?? "").trim() || null;
     const payload = {
       name: updatedStudent.name,
       email: updatedStudent.email || null,
       parent_email: updatedStudent.parentEmail || null,
-      school: updatedStudent.school || null,
+      school: schoolNormalized,
       birth_date: updatedStudent.birthDate || null,
       group_id: updatedStudent.groupId || null,
       // ojo: photo si lo guardas en tabla; si NO tienes columna, no lo envíes
@@ -627,11 +647,13 @@ const App: React.FC = () => {
 
 
   const addStudent = async (newStudent: Student) => {
+    const schoolNormalized =
+      (newStudent.school ?? "").trim() || null;
     const payload = {
       name: newStudent.name,
       email: newStudent.email || null,
       parent_email: newStudent.parentEmail || null,
-      school: newStudent.school || null,
+      school: schoolNormalized,
       birth_date: newStudent.birthDate || null,
       group_id: newStudent.groupId || null,
     };
@@ -653,6 +675,7 @@ const App: React.FC = () => {
       email: data.email ?? "",
       parentEmail: data.parent_email ?? "",
       school: data.school ?? "",
+      photo: undefined,
       birthDate: data.birth_date ? String(data.birth_date) : "",
       groupId: data.group_id ?? "",
       attendanceHistory: [], // historial vive en student_attendance
@@ -1187,6 +1210,7 @@ const App: React.FC = () => {
               classDays={classDays}
               warningMessage={warningMessage}
               warningType={showNoGroupWarning ? "no-group" : showNoStudentsWarning ? "no-students" : undefined}
+              schoolNames={schoolNames}
             />
           )}
           {currentView === 'services' && (
@@ -1208,6 +1232,7 @@ const App: React.FC = () => {
               groups={groups}
               classDays={classDays}
               enableMassServices={true}
+              schoolNames={schoolNames}
             />
           )}
 

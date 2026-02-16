@@ -32,6 +32,7 @@ interface StudentListProps {
   warningMessage?: string;
   warningType?: "no-group" | "no-students";
   enableMassServices?: boolean;
+  schoolNames: { id: string; name: string }[];
 }
 
 const StudentList: React.FC<StudentListProps> = ({ 
@@ -45,6 +46,7 @@ const StudentList: React.FC<StudentListProps> = ({
   warningMessage,
   warningType,
   enableMassServices = false,
+  schoolNames,
 }) => {
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -130,7 +132,7 @@ const StudentList: React.FC<StudentListProps> = ({
   const handleOpenDetail = (student: Student) => {
     setSelectedStudent(student);
     setTempName(student.name);
-    setTempSchool(student.school);
+    setTempSchool(student.school ?? '');
     setTempEmail(student.email ?? '');
     setTempParentEmail(student.parentEmail ?? '');
     setTempBirthDate(student.birthDate);
@@ -158,6 +160,78 @@ const StudentList: React.FC<StudentListProps> = ({
       .createSignedUrl(path, 60 * 60);
     if (error || !data?.signedUrl) return "";
     return data.signedUrl;
+  };
+
+  const deleteStorageFolder = async (prefix: string) => {
+    // En Supabase Storage no existen "carpetas" reales.
+    // Para borrar una subcarpeta, listamos los objetos bajo el prefijo y los eliminamos.
+    const bucket = supabase.storage.from("media");
+
+    let offset = 0;
+    const limit = 100;
+    while (true) {
+      const { data, error } = await bucket.list(prefix, {
+        limit,
+        offset,
+        sortBy: { column: "name", order: "asc" },
+      });
+      if (error) throw error;
+
+      const items = data ?? [];
+      if (items.length === 0) break;
+
+      const paths = items
+        .filter((it: any) => !!it?.name)
+        .map((it: any) => `${prefix}/${it.name}`);
+
+      if (paths.length > 0) {
+        const { error: rmErr } = await bucket.remove(paths);
+        if (rmErr) throw rmErr;
+      }
+
+      if (items.length < limit) break;
+      offset += limit;
+    }
+  };
+
+  const handlePhotoDelete = async () => {
+    if (!selectedStudent?.id) return;
+
+    if (!tempPhoto) {
+      alert("Este alumno no tiene foto de perfil.");
+      return;
+    }
+
+    const ok = window.confirm(
+      "¿Eliminar la foto de perfil? Se borrará del Storage y se quitará del alumno."
+    );
+    if (!ok) return;
+
+    try {
+      const prefix = `students/${selectedStudent.id}`;
+
+      // 1) borrar subcarpeta completa (todos los objetos bajo students/<id>/)
+      await deleteStorageFolder(prefix);
+
+      // 2) limpiar photo_path en BD
+      const { error: dbErr } = await supabase
+        .from("students")
+        .update({ photo_path: null })
+        .eq("id", selectedStudent.id);
+
+      if (dbErr) {
+        alert("Foto borrada del Storage, pero no se pudo actualizar el alumno: " + dbErr.message);
+      }
+
+      // 3) reflejo en UI
+      setTempPhoto(undefined);
+      const updated: Student = { ...selectedStudent, photo: undefined };
+      onUpdateStudent(updated);
+      setSelectedStudent(updated);
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "Error eliminando foto");
+    }
   };
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -276,7 +350,7 @@ const StudentList: React.FC<StudentListProps> = ({
     const updated: Student = {
       ...selectedStudent,
       name: tempName,
-      school: tempSchool,
+      school: tempSchool.trim() ? tempSchool.trim() : null,
       birthDate: tempBirthDate,
       photo: tempPhoto,
       email: tempEmail.trim(),
@@ -312,7 +386,7 @@ const StudentList: React.FC<StudentListProps> = ({
     const s: Student = {
       id: "",
       name: newName,
-      school: newSchool,
+      school: newSchool.trim() ? newSchool.trim() : null,
       email: newEmail.trim(),
       parentEmail: newParentEmail.trim(),
       birthDate: newBirthDate,
@@ -396,7 +470,18 @@ const StudentList: React.FC<StudentListProps> = ({
             <h3 className="text-xl font-bold text-slate-900">Nuevo Catecúmeno</h3>
             <div className="space-y-4">
               <input type="text" placeholder="Nombre completo" className="w-full px-4 py-2 border rounded-xl" value={newName} onChange={e => setNewName(e.target.value)} />
-              <input type="text" placeholder="Colegio" className="w-full px-4 py-2 border rounded-xl" value={newSchool} onChange={e => setNewSchool(e.target.value)} />
+              <select
+                className="w-full px-4 py-2 border rounded-xl"
+                value={newSchool ?? ""}
+                onChange={(e) => setNewSchool(e.target.value)}
+              >
+                <option value="">(Sin colegio)</option>
+                {schoolNames.map((s) => (
+                  <option key={s.id} value={s.name}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
               <input type="date" className="w-full px-4 py-2 border rounded-xl" value={newBirthDate} onChange={e => setNewBirthDate(e.target.value)} />
               <input
                 type="email"
@@ -453,7 +538,19 @@ const StudentList: React.FC<StudentListProps> = ({
                   </div>
                   {isEditing && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-3xl opacity-0 group-hover/photo:opacity-100 transition-opacity">
-                      <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-white text-indigo-600 rounded-full"><Camera size={20} /></button>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-white text-indigo-600 rounded-full"><Camera size={20} /></button>
+                        {tempPhoto && (
+                          <button
+                            type="button"
+                            onClick={() => void handlePhotoDelete()}
+                            className="p-2 bg-white text-red-600 rounded-full"
+                            title="Eliminar foto"
+                          >
+                            <Trash2 size={20} />
+                          </button>
+                        )}
+                      </div>
                       <input type="file" ref={fileInputRef} onChange={handlePhotoUpload} accept="image/*" className="hidden" />
                     </div>
                   )}
@@ -462,7 +559,18 @@ const StudentList: React.FC<StudentListProps> = ({
                   {isEditing ? (
                     <div className="space-y-2">
                       <input type="text" className="w-full px-3 py-2 border rounded-xl text-lg font-bold" value={tempName} onChange={e => setTempName(e.target.value)} />
-                      <input type="text" className="w-full px-3 py-2 border rounded-xl" value={tempSchool} onChange={e => setTempSchool(e.target.value)} />
+                      <select
+                        className="w-full px-3 py-2 border rounded-xl"
+                        value={tempSchool ?? ""}
+                        onChange={(e) => setTempSchool(e.target.value)}
+                      >
+                        <option value="">(Sin colegio)</option>
+                        {schoolNames.map((s) => (
+                          <option key={s.id} value={s.name}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
                       <input
                         type="email"
                         className="w-full px-3 py-2 border rounded-xl"
@@ -483,7 +591,7 @@ const StudentList: React.FC<StudentListProps> = ({
                   ) : (
                     <>
                       <h2 className="text-2xl font-bold text-slate-900">{selectedStudent.name}</h2>
-                      <p className="text-slate-500">{selectedStudent.school}</p>
+                      <p className="text-slate-500">{selectedStudent.school || "SIN COLEGIO REGISTRADO"}</p>
                       <p className="text-slate-500 text-sm">{selectedStudent.email}</p>
                       {selectedStudent.parentEmail && (
                         <p className="text-slate-500 text-sm">Padres: {selectedStudent.parentEmail}</p>
