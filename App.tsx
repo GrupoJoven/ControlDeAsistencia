@@ -33,9 +33,10 @@ import ClassDayManager from './components/ClassDayManager';
 import CatechistManager from './components/CatechistManager';
 import CatechistAttendance from './components/CatechistAttendance';
 import ServicesManagement from './components/ServicesManagement';
+import SchoolCalendar from "./components/SchoolCalendar";
 
 
-type View = 'dashboard' | 'attendance' | 'students' | 'services' | 'coordinator-groups' | 'coordinator-edit-groups' | 'agenda' | 'reports' | 'class-days' | 'catechists' | 'catechist-attendance' | 'account' | 'my-account';
+type View = 'dashboard' | 'school-calendar' | 'attendance' | 'students' | 'services' | 'coordinator-groups' | 'coordinator-edit-groups' | 'agenda' | 'reports' | 'class-days' | 'catechists' | 'catechist-attendance' | 'account' | 'my-account';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -1074,7 +1075,26 @@ const App: React.FC = () => {
 
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto pb-6">
           <div className="px-4 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">General</div>
-          <button onClick={() => navigateTo('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'dashboard' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}><BarChart3 size={20} /><span className="font-medium text-sm">Resumen</span></button>
+
+          <button
+            onClick={() => navigateTo('dashboard')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              currentView === 'dashboard' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <BarChart3 size={20} />
+            <span className="font-medium text-sm">Resumen</span>
+          </button>
+
+          <button
+            onClick={() => navigateTo('school-calendar')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              currentView === 'school-calendar' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <CalendarDays size={20} />
+            <span className="font-medium text-sm">Calendario escolar</span>
+          </button>
 
           <div className="mt-4 px-4 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mi Grupo</div>
           <button onClick={() => navigateTo('attendance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'attendance' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}><CheckCircle2 size={20} /><span className="font-medium text-sm">Pasar Lista</span></button>
@@ -1098,7 +1118,7 @@ const App: React.FC = () => {
               <button onClick={() => navigateTo('catechists')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'catechists' ? 'bg-amber-50 text-amber-700' : 'text-slate-600 hover:bg-slate-50'}`}><Briefcase size={20} /><span className="font-medium text-sm">Registro Catequistas</span></button>
               <button onClick={() => navigateTo('catechist-attendance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'catechist-attendance' ? 'bg-amber-50 text-amber-700' : 'text-slate-600 hover:bg-slate-50'}`}><CheckCircle2 size={20} /><span className="font-medium text-sm">Asistencia Equipo</span></button>
               <button onClick={() => navigateTo('coordinator-edit-groups')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'coordinator-edit-groups' ? 'bg-amber-50 text-amber-700' : 'text-slate-600 hover:bg-slate-50'}`}><Settings size={20} /><span className="font-medium text-sm">Editar Grupos</span></button>
-              <button onClick={() => navigateTo('class-days')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'class-days' ? 'bg-amber-50 text-amber-700' : 'text-slate-600 hover:bg-slate-50'}`}><CalendarDays size={20} /><span className="font-medium text-sm">Calendario Escolar</span></button>
+              <button onClick={() => navigateTo('class-days')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'class-days' ? 'bg-amber-50 text-amber-700' : 'text-slate-600 hover:bg-slate-50'}`}><CalendarDays size={20} /><span className="font-medium text-sm">Gestión de calendario</span></button>
               <button onClick={() => navigateTo('agenda')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'agenda' ? 'bg-amber-50 text-amber-700' : 'text-slate-600 hover:bg-slate-50'}`}><Calendar size={20} /><span className="font-medium text-sm">Gestión Agenda</span></button>
             </>
           )}
@@ -1144,6 +1164,7 @@ const App: React.FC = () => {
             </button>
             <h1 className="text-[15px] sm:text-lg lg:text-xl font-semibold text-slate-800 leading-tight line-clamp-2 max-h-[3rem]">
               {currentView === 'dashboard' && 'Dashboard Parroquial'}
+              {currentView === 'school-calendar' && 'Calendario escolar'}
               {currentView === 'attendance' && 'Control de Asistencia'}
               {currentView === 'students' && (currentGroupName || 'Mis Catecúmenos')}
               {currentView === 'services' && 'Servicios'}
@@ -1199,6 +1220,9 @@ const App: React.FC = () => {
               warningMessage={warningMessage}
               warningType={showNoGroupWarning ? "no-group" : showNoStudentsWarning ? "no-students" : undefined}
             />
+          )}
+          {currentView === 'school-calendar' && (
+            <SchoolCalendar classDays={classDays} />
           )}
 
           {currentView === 'students' && (
