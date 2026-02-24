@@ -34,6 +34,7 @@ import CatechistManager from './components/CatechistManager';
 import CatechistAttendance from './components/CatechistAttendance';
 import ServicesManagement from './components/ServicesManagement';
 import SchoolCalendar from "./components/SchoolCalendar";
+import BirthdayPopup from './components/BirthdayPopup';
 
 
 type View = 'dashboard' | 'school-calendar' | 'attendance' | 'students' | 'services' | 'coordinator-groups' | 'coordinator-edit-groups' | 'agenda' | 'reports' | 'class-days' | 'catechists' | 'catechist-attendance' | 'account' | 'my-account';
@@ -57,6 +58,11 @@ const App: React.FC = () => {
 
   // Para catequistas con varios grupos: cuál está “activo” en la UI
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  type BirthdayInfo = { id: string; name: string; age: number };
+
+  const [baseDataLoaded, setBaseDataLoaded] = useState(false);
+  const [todayBirthdays, setTodayBirthdays] = useState<BirthdayInfo[]>([]);
+  const [showBirthdayPopup, setShowBirthdayPopup] = useState(false);
 
 
   useEffect(() => {
@@ -88,6 +94,39 @@ const App: React.FC = () => {
 
     void boot();
   }, []);
+
+  useEffect(() => {
+    const run = async () => {
+      if (!currentUser) return;
+      if (!baseDataLoaded) return;
+
+      const today = getTodayStr(); // ya lo tienes importado de ./types
+      const seenKey = `birthday_popup_seen_${today}`;
+
+      // si ya se ha mostrado hoy en este navegador, no repetir
+      if (localStorage.getItem(seenKey) === "1") return;
+
+      const { data, error } = await supabase.rpc("get_today_birthdays");
+
+      if (error) {
+        console.error("Error cargando cumpleaños de hoy:", error.message);
+        return;
+      }
+
+      const list = (data ?? []) as { id: string; name: string; age: number }[];
+
+      setTodayBirthdays(list);
+
+      if (list.length > 0) {
+        setShowBirthdayPopup(true);
+      } else {
+        // si no hay cumpleañeros, marcamos como visto para no reintentar en cada render
+        localStorage.setItem(seenKey, "1");
+      }
+    };
+
+    void run();
+  }, [currentUser, baseDataLoaded]);
 
 
   const loadSchoolNames = async () => {
@@ -161,6 +200,7 @@ const App: React.FC = () => {
 
 
   const loadBaseData = async (user: User) => {
+    setBaseDataLoaded(false);
     const signMediaUrl = async (path?: string | null) => {
       if (!path) return "";
       const { data, error } = await supabase.storage
@@ -350,6 +390,7 @@ const App: React.FC = () => {
     }));
 
     setUsers(usersWithAttendance);
+    setBaseDataLoaded(true);
   };
 
   const handleLogout = async () => {
@@ -360,6 +401,9 @@ const App: React.FC = () => {
     setUsers([]);
     setEvents([]);
     setClassDays([]);
+    setBaseDataLoaded(false);
+    setTodayBirthdays([]);
+    setShowBirthdayPopup(false);
   };
 
 
@@ -1051,6 +1095,17 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden relative">
+      {showBirthdayPopup && (
+        <BirthdayPopup
+          currentUser={currentUser}
+          birthdays={todayBirthdays}
+          onClose={() => {
+            const today = getTodayStr();
+            localStorage.setItem(`birthday_popup_seen_${today}`, "1");
+            setShowBirthdayPopup(false);
+          }}
+        />
+      )}
       {isSidebarOpen && (
         <div 
           className="fixed inset-0 bg-slate-900/40 backdrop-blur-[2px] z-40 lg:hidden"
@@ -1471,7 +1526,7 @@ const AgendaManager: React.FC<{ events: ParishEvent[], onAdd: (e: ParishEvent) =
     setNewDate('');
   };
   return (
-    <div className="space-y-6 max-w-2xl mx-auto">
+    <div className="space-y-6 max-w-2xl mx-auto">Sí, 
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <h3 className="text-lg font-bold text-slate-800 mb-4">Añadir Nuevo Evento</h3>
         <div className="flex flex-col sm:flex-row gap-4">
