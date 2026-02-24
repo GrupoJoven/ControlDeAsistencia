@@ -35,7 +35,7 @@ import CatechistAttendance from './components/CatechistAttendance';
 import ServicesManagement from './components/ServicesManagement';
 import SchoolCalendar from "./components/SchoolCalendar";
 import BirthdayPopup from './components/BirthdayPopup';
-
+import StudentBirthdayPopup from './components/StudentBirthdayPopup';
 
 type View = 'dashboard' | 'school-calendar' | 'attendance' | 'students' | 'services' | 'coordinator-groups' | 'coordinator-edit-groups' | 'agenda' | 'reports' | 'class-days' | 'catechists' | 'catechist-attendance' | 'account' | 'my-account';
 
@@ -63,6 +63,10 @@ const App: React.FC = () => {
   const [baseDataLoaded, setBaseDataLoaded] = useState(false);
   const [todayBirthdays, setTodayBirthdays] = useState<BirthdayInfo[]>([]);
   const [showBirthdayPopup, setShowBirthdayPopup] = useState(false);
+  type StudentBirthdayInfo = { student_id: string; student_name: string; age: number; group_id: string };
+
+  const [todayStudentBirthdays, setTodayStudentBirthdays] = useState<StudentBirthdayInfo[]>([]);
+  const [showStudentBirthdayPopup, setShowStudentBirthdayPopup] = useState(false);
 
 
   useEffect(() => {
@@ -121,6 +125,37 @@ const App: React.FC = () => {
         setShowBirthdayPopup(true);
       } else {
         // si no hay cumpleañeros, marcamos como visto para no reintentar en cada render
+        localStorage.setItem(seenKey, "1");
+      }
+    };
+
+    void run();
+  }, [currentUser, baseDataLoaded]);
+
+  useEffect(() => {
+    const run = async () => {
+      if (!currentUser) return;
+      if (!baseDataLoaded) return;
+
+      const today = getTodayStr();
+      const seenKey = `student_birthday_popup_seen_${today}_${currentUser.id}`;
+
+      if (localStorage.getItem(seenKey) === "1") return;
+
+      const { data, error } = await supabase.rpc("get_today_student_birthdays_for_user");
+
+      if (error) {
+        console.error("Error cargando cumpleaños de niños de hoy:", error.message);
+        return;
+      }
+
+      const list = (data ?? []) as { student_id: string; student_name: string; age: number; group_id: string }[];
+
+      setTodayStudentBirthdays(list);
+
+      if (list.length > 0) {
+        setShowStudentBirthdayPopup(true);
+      } else {
         localStorage.setItem(seenKey, "1");
       }
     };
@@ -404,6 +439,8 @@ const App: React.FC = () => {
     setBaseDataLoaded(false);
     setTodayBirthdays([]);
     setShowBirthdayPopup(false);
+    setTodayStudentBirthdays([]);
+    setShowStudentBirthdayPopup(false);
   };
 
 
@@ -1106,6 +1143,18 @@ const App: React.FC = () => {
           }}
         />
       )}
+      {showStudentBirthdayPopup && (
+        <StudentBirthdayPopup
+          currentUser={currentUser}
+          birthdays={todayStudentBirthdays}
+          onClose={() => {
+            const today = getTodayStr();
+            localStorage.setItem(`student_birthday_popup_seen_${today}_${currentUser.id}`, "1");
+            setShowStudentBirthdayPopup(false);
+          }}
+        />
+      )}
+
       {isSidebarOpen && (
         <div 
           className="fixed inset-0 bg-slate-900/40 backdrop-blur-[2px] z-40 lg:hidden"
