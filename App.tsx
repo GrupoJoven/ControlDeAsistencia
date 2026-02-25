@@ -20,6 +20,7 @@ import {
   Key,
   Menu,
   ClipboardList,
+  TriangleAlert,
   X
 } from 'lucide-react';
 import { Student, AttendanceRecord, User, Group, ParishEvent, getTodayStr, AttendanceStatus, CatechistAttendanceRecord } from './types';
@@ -36,8 +37,9 @@ import ServicesManagement from './components/ServicesManagement';
 import SchoolCalendar from "./components/SchoolCalendar";
 import BirthdayPopup from './components/BirthdayPopup';
 import StudentBirthdayPopup from './components/StudentBirthdayPopup';
+import IncidentsManager from './components/IncidentsManager';
 
-type View = 'dashboard' | 'school-calendar' | 'attendance' | 'students' | 'services' | 'coordinator-groups' | 'coordinator-edit-groups' | 'agenda' | 'reports' | 'class-days' | 'catechists' | 'catechist-attendance' | 'account' | 'my-account';
+type View = 'dashboard' | 'school-calendar' | 'attendance' | 'students' | 'services' | 'incidents' | 'coordinator-groups' | 'coordinator-edit-groups' | 'agenda' | 'reports' | 'class-days' | 'catechists' | 'catechist-attendance' | 'account' | 'my-account';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -48,6 +50,7 @@ const App: React.FC = () => {
   const [groups, setGroups] = useState<Group[]>([]);
   const [classDays, setClassDays] = useState<string[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [incidentUsers, setIncidentUsers] = useState<User[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   type GroupCatechistLink = { group_id: string; profile_id: string };
 
@@ -292,6 +295,38 @@ const App: React.FC = () => {
     })));
 
 
+    // --- lista mínima de usuarios para filtros de incidencias ---
+    // coordinator: puede filtrar por cualquiera
+    // catechist: solo por catequistas/coordinadores vinculados a SUS grupos (luego el gestor ya limitará por activeGroupId)
+    const myGroupIdsForUser = links
+      .filter(l => l.profile_id === user.id)
+      .map(l => l.group_id);
+
+    const allowedProfileIdsForIncidents =
+      user.role === "coordinator"
+        ? new Set(usersMapped.map(u => u.id))
+        : new Set(
+            links
+              .filter(l => myGroupIdsForUser.includes(l.group_id))
+              .map(l => l.profile_id)
+          );
+
+    // Si quieres incluir coordinadores aunque no estén en group_catechist:
+    for (const u of usersMapped) {
+      if (u.role === "coordinator") allowedProfileIdsForIncidents.add(u.id);
+    }
+
+    // Lista final (puedes dejar email vacío para catequistas, por privacidad)
+    const incidentUsersList =
+      user.role === "coordinator"
+        ? usersMapped
+        : usersMapped
+            .filter(u => allowedProfileIdsForIncidents.has(u.id))
+            .map(u => ({ ...u, email: "" })); // opcional
+
+    setIncidentUsers(incidentUsersList);
+
+
     // Si NO eres coordinator, quédate solo con tu perfil (evita exponer datos innecesarios)
     const usersScoped = user.role === "coordinator"
       ? usersMapped
@@ -434,6 +469,7 @@ const App: React.FC = () => {
     setStudents([]);
     setGroups([]);
     setUsers([]);
+    setIncidentUsers([]);
     setEvents([]);
     setClassDays([]);
     setBaseDataLoaded(false);
@@ -1199,7 +1235,7 @@ const App: React.FC = () => {
             <CalendarDays size={20} />
             <span className="font-medium text-sm">Calendario escolar</span>
           </button>
-
+          
           <div className="mt-4 px-4 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mi Grupo</div>
           <button onClick={() => navigateTo('attendance')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'attendance' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}><CheckCircle2 size={20} /><span className="font-medium text-sm">Pasar Lista</span></button>
           <button onClick={() => navigateTo('students')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${currentView === 'students' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}><Users size={20} /><span className="font-medium text-sm">Mis Catecúmenos</span></button>
@@ -1213,6 +1249,15 @@ const App: React.FC = () => {
           >
             <ClipboardList size={20} />
             <span className="font-medium text-sm">Servicios</span>
+          </button>
+          <button
+            onClick={() => navigateTo('incidents')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              currentView === 'incidents' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <TriangleAlert size={20} />
+            <span className="font-medium text-sm">Incidencias</span>
           </button>
 
           {currentUser.role === 'coordinator' && (
@@ -1272,6 +1317,7 @@ const App: React.FC = () => {
               {currentView === 'attendance' && 'Control de Asistencia'}
               {currentView === 'students' && (currentGroupName || 'Mis Catecúmenos')}
               {currentView === 'services' && 'Servicios'}
+              {currentView === 'incidents' && 'Gestión de incidencias'}
               {currentView === 'reports' && 'Informes pastorales con IA'}
               {currentView === 'coordinator-groups' && 'Gestión Integral de Niños'}
               {currentView === 'catechists' && 'Registro de Catequistas'}
@@ -1327,6 +1373,17 @@ const App: React.FC = () => {
           )}
           {currentView === 'school-calendar' && (
             <SchoolCalendar classDays={classDays} />
+          )}
+
+          {currentView === 'incidents' && (
+            <IncidentsManager
+              currentUser={currentUser}
+              groups={groups}
+              students={students}
+              users={incidentUsers}
+              activeGroupId={activeGroupId}
+              groupCatechistLinks={groupCatechistLinks}
+            />
           )}
 
           {currentView === 'students' && (
