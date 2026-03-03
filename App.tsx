@@ -1632,7 +1632,7 @@ const AgendaManager: React.FC<{ events: ParishEvent[], onAdd: (e: ParishEvent) =
     setNewDate('');
   };
   return (
-    <div className="space-y-6 max-w-2xl mx-auto">Sí, 
+    <div className="space-y-6 max-w-2xl mx-auto">
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <h3 className="text-lg font-bold text-slate-800 mb-4">Añadir Nuevo Evento</h3>
         <div className="flex flex-col sm:flex-row gap-4">
