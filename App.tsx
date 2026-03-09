@@ -41,6 +41,13 @@ import IncidentsManager from './components/IncidentsManager';
 
 type View = 'dashboard' | 'school-calendar' | 'attendance' | 'students' | 'services' | 'incidents' | 'coordinator-groups' | 'coordinator-edit-groups' | 'agenda' | 'reports' | 'class-days' | 'catechists' | 'catechist-attendance' | 'account' | 'my-account';
 
+const normalizeSearchText = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState<View>('dashboard');
@@ -1105,7 +1112,7 @@ const App: React.FC = () => {
     return students
       .filter(s =>
         s.groupId === activeGroupId &&
-        s.name.toLowerCase().includes(searchQuery.toLowerCase())
+        normalizeSearchText(s.name).includes(normalizeSearchText(searchQuery))
       )
       .sort((a, b) =>
         a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
@@ -1116,7 +1123,7 @@ const App: React.FC = () => {
   const filteredUsers = useMemo(() => {
     if (!searchQuery) return users;
     return users.filter(u =>
-      u.name.toLowerCase().includes(searchQuery.toLowerCase())
+      normalizeSearchText(u.name).includes(normalizeSearchText(searchQuery))
       )
       .sort((a, b) =>
         a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
@@ -1409,7 +1416,7 @@ const App: React.FC = () => {
 
           {currentView === 'coordinator-groups' && (
             <StudentList
-              students={students.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase()))}
+              students={students.filter(s => normalizeSearchText(s.name).includes(normalizeSearchText(searchQuery)))}
               onUpdateStudent={(s) => void updateStudent(s)}
               canEditCenso={true}
               onAddStudent={(s) => void addStudent(s)}
