@@ -78,6 +78,9 @@ const App: React.FC = () => {
   const [todayStudentBirthdays, setTodayStudentBirthdays] = useState<StudentBirthdayInfo[]>([]);
   const [showStudentBirthdayPopup, setShowStudentBirthdayPopup] = useState(false);
 
+  const [showLegacyVersionModal, setShowLegacyVersionModal] = useState(true);
+  const [legacyCloseCountdown, setLegacyCloseCountdown] = useState(6);
+
 
   useEffect(() => {
     const boot = async () => {
@@ -108,6 +111,18 @@ const App: React.FC = () => {
 
     void boot();
   }, []);
+
+  useEffect(() => {
+    if (!showLegacyVersionModal) return;
+    if (legacyCloseCountdown <= 0) return;
+
+    const timer = window.setTimeout(() => {
+      setLegacyCloseCountdown((prev) => prev - 1);
+    }, 1000);
+
+    return () => window.clearTimeout(timer);
+  }, [showLegacyVersionModal, legacyCloseCountdown]);
+
 
   useEffect(() => {
     const run = async () => {
@@ -1173,8 +1188,116 @@ const App: React.FC = () => {
 
   if (!currentUser) return <Login onLogin={handleLogin} />;
 
+  const canCloseLegacyModal = legacyCloseCountdown === 0;
+
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden relative">
+
+      {showLegacyVersionModal && (
+        <>
+          <div className="fixed inset-0 z-[120] bg-slate-950/60 backdrop-blur-sm" />
+
+          <div className="fixed inset-0 z-[121] overflow-y-auto p-4">
+            <div className="min-h-full flex items-start sm:items-center justify-center py-6">
+              <div className="w-full max-w-xl rounded-3xl border border-indigo-200 bg-white shadow-2xl overflow-hidden">
+                <div className="bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-5 text-white">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-100">
+                        Nueva versión disponible
+                      </p>
+                      <h2 className="mt-2 text-2xl font-extrabold leading-tight">
+                        Esta app ya tiene una versión nueva y mejorada
+                      </h2>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={!canCloseLegacyModal}
+                      onClick={() => {
+                        if (!canCloseLegacyModal) return;
+                        setShowLegacyVersionModal(false);
+                      }}
+                      className={`rounded-xl p-2 transition-colors ${
+                        canCloseLegacyModal
+                          ? "bg-white/15 hover:bg-white/25 text-white"
+                          : "bg-white/10 text-white/50 cursor-not-allowed pointer-events-none"
+                      }`}
+                      aria-label="Cerrar aviso"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="px-6 py-6 max-h-[calc(100vh-8rem)] overflow-y-auto">
+                  <p className="text-slate-700 text-base leading-7">
+                    Estás usando una versión antigua de la aplicación. No es culpa tuya, el malo de Tomás no te quiso avisar para quedársela entera para él solito. A partir de ahora,
+                    utiliza la nueva versión, que incorpora mejoras importantes y varias
+                    correcciones.
+                  </p>
+
+                  <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-800 mb-2">
+                      Mejoras destacadas
+                    </p>
+                    <ul className="space-y-2 text-sm text-slate-700">
+                      <li>• Nuevo logo e imagen más cuidada</li>
+                      <li>• Modo sin conexión</li>
+                      <li>• Notificaciones en tiempo real de eventos en la agenda</li>
+                      <li>• Otras correcciones y mejoras menores</li>
+                    </ul>
+                  </div>
+
+                  <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+                    <p className="text-sm font-semibold text-indigo-900 mb-2">
+                      Nueva dirección
+                    </p>
+                    <p className="break-all text-sm font-medium text-indigo-700">
+                      https://control-asistencia-pwa.vercel.app/
+                    </p>
+                  </div>
+
+                  <div className="mt-6 flex flex-col sm:flex-row gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.location.href = "https://control-asistencia-pwa.vercel.app/";
+                      }}
+                      className="inline-flex items-center justify-center rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700 transition-colors"
+                    >
+                      Ir a la nueva versión
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={!canCloseLegacyModal}
+                      onClick={() => {
+                        if (!canCloseLegacyModal) return;
+                        setShowLegacyVersionModal(false);
+                      }}
+                      className={`inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-bold transition-colors ${
+                        canCloseLegacyModal
+                          ? "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                          : "bg-slate-100 text-slate-400 cursor-not-allowed pointer-events-none"
+                      }`}
+                    >
+                      {canCloseLegacyModal
+                        ? "Seguir en la versión antigua temporalmente."
+                        : `Cerrar disponible en ${legacyCloseCountdown}s`}
+                    </button>
+                  </div>
+
+                  <p className="mt-4 text-xs text-slate-500">
+                    Recomendación: cambia ya a la nueva versión para trabajar con la app actualizada. Blom de momento mantiene esta versión, pero dejará de hacerlo en breves.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {showBirthdayPopup && (
         <BirthdayPopup
           currentUser={currentUser}
