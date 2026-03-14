@@ -81,6 +81,38 @@ const App: React.FC = () => {
   const [showLegacyVersionModal, setShowLegacyVersionModal] = useState(true);
   const [legacyCloseCountdown, setLegacyCloseCountdown] = useState(6);
 
+  const LEGACY_DEADLINE = "2026-03-31T23:59:00";
+  const [legacyTimeLeft, setLegacyTimeLeft] = useState("");
+
+
+  useEffect(() => {
+    const updateLegacyCountdown = () => {
+      const deadline = new Date(LEGACY_DEADLINE).getTime();
+      const now = Date.now();
+      const diff = deadline - now;
+
+      if (diff <= 0) {
+        setLegacyTimeLeft("caducada");
+        return;
+      }
+
+      const totalSeconds = Math.floor(diff / 1000);
+      const days = Math.floor(totalSeconds / (24 * 60 * 60));
+      const hours = Math.floor((totalSeconds % (24 * 60 * 60)) / (60 * 60));
+      const minutes = Math.floor((totalSeconds % (60 * 60)) / 60);
+
+      if (days > 0) {
+        setLegacyTimeLeft(`${days}d ${hours}h ${minutes}min`);
+      } else {
+        setLegacyTimeLeft(`${hours}h ${minutes}min`);
+      }
+    };
+
+    updateLegacyCountdown();
+    const interval = window.setInterval(updateLegacyCountdown, 1000);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const boot = async () => {
@@ -1188,7 +1220,15 @@ const App: React.FC = () => {
 
   if (!currentUser) return <Login onLogin={handleLogin} />;
 
-  const canCloseLegacyModal = legacyCloseCountdown === 0;
+  const isLegacyExpired = legacyTimeLeft === "caducada";
+  const canCloseLegacyModal = legacyCloseCountdown === 0 && !isLegacyExpired;
+  const formattedLegacyDeadline = new Date(LEGACY_DEADLINE).toLocaleString("es-ES", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden relative">
@@ -1232,9 +1272,9 @@ const App: React.FC = () => {
 
                 <div className="px-6 py-6 max-h-[calc(100vh-8rem)] overflow-y-auto">
                   <p className="text-slate-700 text-base leading-7">
-                    Estás usando una versión antigua de la aplicación. No es culpa tuya, el malo de Tomás no te quiso avisar para quedársela entera para él solito. A partir de ahora,
-                    utiliza la nueva versión, que incorpora mejoras importantes y varias
-                    correcciones.
+                    {isLegacyExpired
+                      ? "Esta versión antigua ya ha caducado. Debes acceder a la nueva versión para seguir utilizando la aplicación."
+                      : "Estás usando una versión antigua de la aplicación. No es culpa tuya, el malo de Tomás no te quiso avisar para quedársela entera para él solito. A partir de ahora, utiliza la nueva versión, que incorpora mejoras importantes y varias correcciones."}
                   </p>
 
                   <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -1282,9 +1322,11 @@ const App: React.FC = () => {
                           : "bg-slate-100 text-slate-400 cursor-not-allowed pointer-events-none"
                       }`}
                     >
-                      {canCloseLegacyModal
-                        ? "Seguir en la versión antigua temporalmente."
-                        : `Cerrar disponible en ${legacyCloseCountdown}s`}
+                      {isLegacyExpired
+                        ? "Versión antigua no disponible"
+                        : canCloseLegacyModal
+                          ? "Seguir en la versión antigua"
+                          : `Cerrar disponible en ${legacyCloseCountdown}s`}
                     </button>
                   </div>
 
@@ -1482,7 +1524,38 @@ const App: React.FC = () => {
             )}
           </div>
         </header>
+        <div className="mx-4 mt-4 lg:mx-8 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-rose-900 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3 min-w-0">
+              <TriangleAlert size={18} className="mt-0.5 shrink-0" />
+              <div className="text-sm min-w-0">
+                <p className="font-semibold">Versión antigua</p>
+                <p>
+                  {isLegacyExpired ? (
+                    <>
+                      Esta versión ha caducado. Accede ya a la nueva versión.
+                    </>
+                  ) : (
+                    <>
+                      Versión disponible hasta el <strong>{formattedLegacyDeadline}</strong>.
+                      {" "}Tiempo restante: <strong>{legacyTimeLeft}</strong>.
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
 
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = "https://control-asistencia-pwa.vercel.app/";
+              }}
+              className="shrink-0 inline-flex items-center justify-center rounded-xl bg-rose-600 px-4 py-2 text-sm font-bold text-white hover:bg-rose-700 transition-colors"
+            >
+              Ir a la nueva versión
+            </button>
+          </div>
+        </div>
         <div className="p-4 lg:p-8">
           {isSearchView && (
             <div className="sm:hidden mb-6 relative">
