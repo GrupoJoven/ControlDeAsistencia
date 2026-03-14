@@ -1537,7 +1537,7 @@ const App: React.FC = () => {
                     </>
                   ) : (
                     <>
-                      <em>Agenda Parroquial</em> no funciona correctamente en esta versión, <em>Pasar Lista</em> sí. Versión disponible hasta el <strong>{formattedLegacyDeadline}</strong>.
+                      Versión disponible hasta el <strong>{formattedLegacyDeadline}</strong>.
                       {" "}Tiempo restante: <strong>{legacyTimeLeft}</strong>.
                     </>
                   )}
